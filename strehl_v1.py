@@ -289,7 +289,8 @@ image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR5
 image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
 image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
 ##03092026
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+##image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+
 ## backgrounds 
 background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
 

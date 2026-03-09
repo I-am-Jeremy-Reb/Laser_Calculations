@@ -187,6 +187,7 @@ def append_strehl_to_csv(
             datetime.now().isoformat(timespec="seconds"),
         ])
         
+        
 ## Next will update the strehl csv
 def strehl_from_image(
     image_path,
@@ -313,9 +314,11 @@ image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR5
 image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
 image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
 ##03092026
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+image_path = folder ="S:/TA1/Focal_Spot_Data/TA1_Focal_Spot_Images/3-9-26_focalspots_batch_morefiltering/TA1_Input_Ref.__40483695__20260309_125904572_0000.tiff"
+
 ## backgrounds 
-background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
+background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_3_covered_03092026_SN_40483695.tiff"
+
 
 # Calculated Diffraction limit spot radius
 spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
@@ -326,7 +329,9 @@ strehl,r80_um = strehl_from_image(
     image_path,
     um_per_pixel ,
     spot_radius_um,
-    background_image_path=background_path_TA1, ## added background
+    #    background_image_path=background_path_TA1, ## added background
+    background_image_path=None, ## added background+
+
     plot=True,
 )
 
@@ -338,11 +343,12 @@ print(f"80% enclosed enregy radius = {r80_um:.4f}")
 #####################################
 #### Loop through files
 
-folder = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+folder ="S:/TA1/Focal_Spot_Data/TA1_Focal_Spot_Images/Sub_Sample_3-9-26_focalspots_batch_morefiltering"
 
 # Calculated Diffraction limit spot radius
 spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
-
+if not os.path.exists(folder):
+    raise FileNotFoundError(f"Folder not found: {folder}")
 for filename in os.listdir(folder):
     
     image_path = os.path.join(folder, filename)
@@ -351,6 +357,7 @@ for filename in os.listdir(folder):
     if not os.path.isfile(image_path):
         continue
 
+    
     strehl, r80_um = strehl_from_image(
         image_path,
         um_per_pixel,
