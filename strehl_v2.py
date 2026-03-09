@@ -5,9 +5,9 @@ import csv
 import os
 from datetime import datetime
 
-##Jeremy Rebenstock 03/03/2026
+##Jeremy Rebenstock 03/09/2026
 ##jrebenst@umich.edu
-
+## V2 can read all files in a folder and calculate strehl ratios 
 
 
 def load_image_as_array(path):
@@ -278,20 +278,6 @@ def strehl_from_image(
     return strehl,r80_um
 
 ## change based on system 
-##image_path = "Focal_Spot_Images/Focal_Spot_Tests/10mJ_New_Optimized_FocalSpotWithDPM_2025-07-17_1109AM.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/20250627Optimized_focal_spot_wObjective_wPM_exptime3e3.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/FocalSpot_vac_3-5-26.tiff" 
-#
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
-## synology focal spot: 
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
-##03092026
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
-## backgrounds 
-background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
 
 ## Optical parameters for Diffraction spot size calculation
 #### TA2 values 
@@ -315,6 +301,22 @@ um_per_pixel = 0.085416666667 ## TA2
 um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera
 um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro (model number of camera used output_ref)
 
+
+##image_path = "Focal_Spot_Images/Focal_Spot_Tests/10mJ_New_Optimized_FocalSpotWithDPM_2025-07-17_1109AM.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/20250627Optimized_focal_spot_wObjective_wPM_exptime3e3.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/FocalSpot_vac_3-5-26.tiff" 
+#
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
+## synology focal spot: 
+image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
+image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
+##03092026
+image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+## backgrounds 
+background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
+
 # Calculated Diffraction limit spot radius
 spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
 #### Can enter diffraction limited spot radius by hand if you want 
@@ -331,6 +333,37 @@ strehl,r80_um = strehl_from_image(
 print(f"Diffraction limit = {spot_radius_um:.4f}")
 print(f"Strehl ratio from = {strehl:.4f}")
 print(f"80% enclosed enregy radius = {r80_um:.4f}")
+
+
+#####################################
+#### Loop through files
+
+folder = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+
+# Calculated Diffraction limit spot radius
+spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
+
+for filename in os.listdir(folder):
+    
+    image_path = os.path.join(folder, filename)
+
+    # Skip directories
+    if not os.path.isfile(image_path):
+        continue
+
+    strehl, r80_um = strehl_from_image(
+        image_path,
+        um_per_pixel,
+        spot_radius_um,
+        background_image_path=background_path_TA1,
+        plot=False,
+    )
+
+    print(f"\nFile: {filename}")
+    print(f"Diffraction limit = {spot_radius_um:.4f}")
+    print(f"Strehl ratio = {strehl:.4f}")
+    print(f"80% enclosed energy radius = {r80_um:.4f}")
+
 
 
 ## Further improvements/calculations that can be included
