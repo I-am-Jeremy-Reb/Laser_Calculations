@@ -5,7 +5,7 @@ import csv
 import os
 from datetime import datetime
 
-##Jeremy Rebenstock 03/03
+##Jeremy Rebenstock 03/03/2026
 ##jrebenst@umich.edu
 
 
@@ -223,7 +223,11 @@ def strehl_from_image(
     
 
     # ---- CSV WRITE ---- ## Add other values as desired? 
-    csv_path="Focal_Spot_Data/strehl_data.csv"
+    csv_name = "strehl_data.csv"
+    parent1 = os.path.dirname(image_path)
+    parent2 = os.path.dirname(parent1)
+    csv_path=os.path.join(parent2,csv_name)
+
     append_strehl_to_csv(
         csv_path, ## from current folder
         image_path,
@@ -270,41 +274,62 @@ def strehl_from_image(
         plt.show()
 
 
-
-
     return strehl,r80_um
 
 ## change based on system 
 ##image_path = "Focal_Spot_Images/Focal_Spot_Tests/10mJ_New_Optimized_FocalSpotWithDPM_2025-07-17_1109AM.tiff"
 image_path = "Focal_Spot_Images/Focal_Spot_Tests/20250627Optimized_focal_spot_wObjective_wPM_exptime3e3.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/FocalSpot_vac_3-5-26.tiff" 
+#
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM.tiff"
+image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
+## synology focal spot: 
+image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
+image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
+
+## backgrounds 
+background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
 
 ## Optical parameters for Diffraction spot size calculation
-## TA2 values 
+#### TA2 values 
 wavelength_nm = 800
 beam_diameter_inch = 3.267
 focal_length_inch = 8
+####
+####TA1 Values ## Need to update; if they  are going to be reused store in dictionary? 
+# ## github not pushed after adding different parameters 
 ##
+TA1_PW_wavelength_nm = 800
+TA1_PW_beam_diameter_inch = 12## is this fine? 
+TA1_PW_focal_length_inch = 12*60
+##
+TA1_TW_wavelength_nm = 800
+TA1_TW_beam_diameter_inch = 3.267
+TA1_TW_focal_length_inch = 8
+####
 # Camera calibration
-um_per_pixel = 0.085416666667 
+um_per_pixel = 0.085416666667 ## TA2 
+um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera
+um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro ()
+
+
+
 
 # Calculated Diffraction limit spot radius
-spot_radius_um = diffraction_limited_spot_size(
-    wavelength_nm,
-    beam_diameter_inch,
-    focal_length_inch
-)
+spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
 #### Can enter diffraction limited spot radius by hand if you want 
 ## spot_radius_um = 2.7
 
 strehl,r80_um = strehl_from_image(
     image_path,
-    um_per_pixel,
+    um_per_pixel ,
     spot_radius_um,
-    background_image_path=None,
+    background_image_path=background_path_TA1, ## added background
     plot=True,
 )
 
-
+print(f"Diffraction limit = {spot_radius_um:.4f}")
 print(f"Strehl ratio from = {strehl:.4f}")
 print(f"80% enclosed enregy radius = {r80_um:.4f}")
 
@@ -313,3 +338,5 @@ print(f"80% enclosed enregy radius = {r80_um:.4f}")
 ## Add parameter for energy: to calculate a0, 
 ##      Paul suggests calcaulate teh r80: the radius which incircles 80% of the energy
 ##      Background subtraction feature 
+## Image/data management -> not putting a bunch of focal spot images on github, just pull them from synology. 
+## -Now There is a folder in synology/TA1 called Focal_Spot_Images which has -> TA1_Focal_Spot_Backgrounds and -> TA1_Focal_Spot_Images
