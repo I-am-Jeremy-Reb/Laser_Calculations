@@ -238,6 +238,7 @@ def strehl_from_image(
         r9995_um,
         background_image_path
     )
+    print("Data written to",csv_path )
 
     if plot:
         
@@ -301,8 +302,8 @@ focal_length_inch = 8
 # ## github not pushed after adding different parameters 
 ##
 TA1_PW_wavelength_nm = 800
-TA1_PW_beam_diameter_inch = 12## is this fine? 
-TA1_PW_focal_length_inch = 12*60
+TA1_PW_beam_diameter_inch = 12
+TA1_PW_focal_length_inch = 12*60 ## 60 
 ##
 TA1_TW_wavelength_nm = 800
 TA1_TW_beam_diameter_inch = 3.267
@@ -311,7 +312,7 @@ TA1_TW_focal_length_inch = 8
 # Camera calibration
 um_per_pixel = 0.085416666667 ## TA2 
 um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera
-um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro ()
+um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro (model number of camera used output_ref)
 
 
 
