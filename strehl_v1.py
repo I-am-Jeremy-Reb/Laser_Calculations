@@ -313,7 +313,7 @@ TA1_TW_focal_length_inch = 8
 ####
 # Camera calibration
 um_per_pixel = 0.085416666667 ## TA2 
-um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera
+um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera???
 um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro (model number of camera used output_ref)
 
 # Calculated Diffraction limit spot radius
