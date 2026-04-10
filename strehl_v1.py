@@ -1,342 +1,312 @@
-from PIL import Image
-import numpy as np
-import matplotlib.pyplot as plt
-import csv
-import os
-from datetime import datetime
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Optics & Image Analysis Toolkit</title>
 
-##Jeremy Rebenstock 03/03/2026
-##jrebenst@umich.edu
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
+<style>
+body {
+    font-family: "Segoe UI", Tahoma, sans-serif;
+    margin: 0;
+    background: #f4f6f8;
+}
 
+nav {
+    background: #1f2937;
+    padding: 12px;
+    text-align: center;
+}
 
-def load_image_as_array(path):
-    """Load grayscale image as NumPy array of float64."""
-    img = Image.open(path).convert("L")
-    return np.array(img, dtype=np.float64)
+nav button {
+    margin: 5px;
+    padding: 10px 18px;
+    border: none;
+    background: #374151;
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+}
 
-def find_focal_spot_center(img_array):
-    """Find center of brightest pixel (approx focal spot center)."""
-    y, x = np.unravel_index(np.argmax(img_array), img_array.shape)
-    return x, y
+nav button:hover { background: #4b5563; }
 
-def circular_mask(shape, center_x, center_y, radius_px):
-    """Boolean circular mask."""
-    Y, X = np.ogrid[:shape[0], :shape[1]]
-    return (X - center_x)**2 + (Y - center_y)**2 <= radius_px**2
+.container {
+    max-width: 900px;
+    margin: auto;
+    padding: 30px;
+}
 
+.card {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+    margin-bottom: 25px;
+}
 
-def diffraction_limited_spot_size(wavelength_nm, beam_diameter_inch, focal_length_inch):
-    wavelength_um = wavelength_nm / 1000
-    beam_diameter_um = beam_diameter_inch * 25_400
-    focal_length_um = focal_length_inch * 25_400
+.tab { display: none; }
+.active { display: block; }
 
-    NA = beam_diameter_um / (2 * focal_length_um)
-    spot_diameter_um = 1.22 * wavelength_um / NA
-    return spot_diameter_um / 2  # radius in µm
+input {
+    margin: 5px;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+}
 
-def load_background_image(path, target_shape):
-    """
-    Load background image and verify it matches the focal spot image shape.
-    """
-    bkg = load_image_as_array(path)
+button.calc {
+    margin-top: 10px;
+    padding: 10px 15px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
 
-    if bkg.shape != target_shape:
-        raise ValueError(
-            f"Background image shape {bkg.shape} does not match focal image shape {target_shape}"
-        )
+.result {
+    margin-top: 15px;
+    font-weight: bold;
+}
 
-    return bkg
+img.preview {
+    max-width: 300px;
+    margin-top: 15px;
+    border-radius: 8px;
+}
 
+.logo-container {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 20px;
+}
 
+.logo-container img {
+    height: 80px;
+}
+</style>
+</head>
 
-import numpy as np
-import matplotlib.pyplot as plt
+<body>
 
-def _encircled_energy_core(img, fraction=0.80):
-    """
-    Core computation for encircled-energy radius.
-    Returns center_x, center_y, radius_px, energy_encircled, total_energy
-    """
-    center_x, center_y = find_focal_spot_center(img)
+<nav>
+    <button onclick="showTab('home')">Home</button>
+    <button onclick="showTab('strehl')">Strehl / Encircled Energy</button>
+    <button onclick="showTab('rayleigh')">Rayleigh Range</button>
+    <button onclick="showTab('gaussian')">Gaussian Beam</button>
+</nav>
 
-    total_energy = np.sum(img)
-    if total_energy <= 0:
-        raise ValueError("Total energy is zero or negative.")
+<div class="container">
 
-    Y, X = np.indices(img.shape)
-    r = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
+<!-- HOME -->
+<div id="home" class="tab active">
+    <div class="card">
+        <h1>Optics & Image Analysis Toolkit</h1>
 
-    r_flat = r.flatten()
-    img_flat = img.flatten()
+        <div class="logo-container">
+            <img src="zeus_logo.png">
+            <img src="nsf_logo.png">
+        </div>
 
-    sort_idx = np.argsort(r_flat)
-    r_sorted = r_flat[sort_idx]
-    img_sorted = img_flat[sort_idx]
+        <p>
+        This toolkit provides browser-based diagnostics for laser beam analysis.
+        Contributions are welcome.
+        </p>
 
-    cumulative_energy = np.cumsum(img_sorted)
+        <p>
+        Developer: 
+        <a href="https://sites.google.com/view/jeremy-rebenstock/about" target="_blank">
+        Jeremy Rebenstock
+        </a>
+        </p>
+    </div>
+</div>
 
-    target_energy = fraction * total_energy
-    idx = np.searchsorted(cumulative_energy, target_energy)
+<!-- STREHL -->
+<div id="strehl" class="tab">
+    <div class="card">
+        <h2>Encircled Energy & Strehl Estimate</h2>
 
-    radius_px = r_sorted[idx]
-    energy_encircled = cumulative_energy[idx]
+        \[
+        E(r) = \int_0^r I(r') 2\pi r' dr'
+        \]
 
-    return center_x, center_y, radius_px, energy_encircled, total_energy
+        \[
+        S \approx \left(\frac{r_{\mathrm{DL}}}{r_{\mathrm{meas}}}\right)^2
+        \]
 
-def encircled_energy_radius_px(img, fraction=0.80):
-    """
-    Returns
-    -------
-    radius_px : float
-        Radius containing target energy (pixels)
-    """
-    _, _, radius_px, _, _ = _encircled_energy_core(img, fraction)
-    return radius_px
+        <input type="file" id="upload"><br>
 
-def encircled_energy_radius_um(img, um_per_pixel, fraction=0.80):
-    """
-    Returns
-    -------
-    radius_um : float
-        Radius containing target energy (µm)
-    """
-    _, _, radius_px, _, _ = _encircled_energy_core(img, fraction)
-    return radius_px * um_per_pixel
+        <input id="um_per_pixel" placeholder="µm per pixel">
+        <input id="r_dl" placeholder="Diffraction-limited radius (µm)"><br>
 
-def encircled_energy_value(
-    img,
-    um_per_pixel,
-    fraction=0.80,
-    plot=True
-):
-    """
-    Returns
-    -------
-    energy_encircled : float
-        Energy inside the encircled-energy radius
-    """
-    center_x, center_y, radius_px, energy_encircled, total_energy = \
-        _encircled_energy_core(img, fraction)
+        <img id="preview" class="preview">
+        <canvas id="canvas" style="display:none;"></canvas>
 
-    radius_um = radius_px * um_per_pixel
+        <div id="result" class="result"></div>
 
-    print(f"{fraction*100:}% encircled-energy radius:")
-    print(f"  Radius = {radius_px:.2f} pixels")
-    print(f"  Radius = {radius_um:.2f} µm")
-    print(f"  Energy enclosed = {energy_encircled:.3e}")
+        <p style="font-size:0.9em;">
+        Reference: Siegman, <i>Lasers</i> (1986)
+        </p>
+    </div>
+</div>
 
-    if plot:
-        plt.figure(figsize=(5,5))
-        plt.imshow(img, cmap="hot", origin="lower", norm="log")
-        circle = plt.Circle(
-            (center_x, center_y),
-            radius_px,
-            color="cyan",
-            fill=False,
-            lw=2
-        )
-        plt.gca().add_patch(circle)
-        plt.title(f"{fraction*100:}% Encircled Energy")
-        plt.colorbar(label="Counts")
-        plt.show()
+<!-- RAYLEIGH -->
+<div id="rayleigh" class="tab">
+    <div class="card">
+        <h2>Rayleigh Range</h2>
 
-    return energy_encircled
+        \[
+        w_0 \approx \frac{\lambda f/\#}{\pi}
+        \quad
+        z_R = \frac{\pi w_0^2}{\lambda}
+        \]
 
+        <input id="fnum" placeholder="f-number">
+        <input id="lambda" placeholder="Wavelength (m)"><br>
 
+        <button class="calc" onclick="calcRayleigh()">Calculate</button>
+        <div id="rayleighResult" class="result"></div>
+    </div>
+</div>
 
-def append_strehl_to_csv(
-    csv_path,
-    image_path,
-    strehl_value,
-    diffraction_radius_um,
-    um_per_pixel,
-    r80_um,
-    r9995_um,
-    background_image_path=None
-):
-    """
-    Append a Strehl calculation to a CSV file.
-    Creates the file with headers if it does not exist.
-    """
-    file_exists = os.path.isfile(csv_path)
+<!-- GAUSSIAN -->
+<div id="gaussian" class="tab">
+    <div class="card">
+        <h2>Gaussian Beam Propagation</h2>
 
-    with open(csv_path, mode="a", newline="") as f:
-        writer = csv.writer(f)
+        \[
+        w(z) = w_0 \sqrt{1 + \left(\frac{z}{z_R}\right)^2}
+        \]
 
-        if not file_exists:
-            writer.writerow([
-                "image_file",
-                "strehl_ratio",
-                "diffraction_limit_radius_um",
-                "EE.8_radius_um",## encircled energy 80%
-                "EE.9995_radius_um",## encircled energy 99.95%
-                "background image",
-                "um_per_pixel",
-                "datetime_run",
-            ])
+        <input id="w0_g" placeholder="w0 (m)">
+        <input id="lambda_g" placeholder="λ (m)">
+        <input id="z_g" placeholder="z (m)"><br>
 
-        writer.writerow([
-            os.path.abspath(image_path),  
-            f"{strehl_value:.6f}",
-            f"{diffraction_radius_um:.4f}",
-            f"{r80_um:.6f}",
-            f"{r9995_um:.6f}",
-            f"{background_image_path}",
-            f"{um_per_pixel:.4f}",
-            datetime.now().isoformat(timespec="seconds"),
-        ])
-        
-## Next will update the strehl csv
-def strehl_from_image(
-    image_path,
-    um_per_pixel,
-    diffraction_radius_um,
-    background_image_path=None,
-    plot=True
-):
-    
-    img = load_image_as_array(image_path)
-    # Optional background subtraction
-    if background_image_path is not None:
-        bkg = load_background_image(background_image_path, img.shape)
-        img = img - bkg
-        img[img < 0] = 0.0  # prevent negative intensities
+        <button class="calc" onclick="calcGaussian()">Calculate</button>
+        <div id="gaussianResult" class="result"></div>
+    </div>
+</div>
 
-    cx, cy = find_focal_spot_center(img)
-    radius_px = diffraction_radius_um / um_per_pixel ## radius of diffraction limited spot in pixels
-    
-    ## calculate values based on encircled energies
-    r80_px = encircled_energy_radius_px(img =img,fraction = .8)
-    r80_um = encircled_energy_radius_um(img = img, um_per_pixel = um_per_pixel,fraction = .8) ##radius of 80% energy included
-    r9995_um = encircled_energy_radius_um(img = img, um_per_pixel = um_per_pixel,fraction = .9995) ##radius of 99.95% energy included
-    
-    E9995    = encircled_energy_value(img = img, um_per_pixel=um_per_pixel, plot=False,fraction = .9995) ## the Energy within the circle of which contains 99.95% of energy
-    
-    spot_mask = circular_mask(img.shape, cx, cy, radius_px) ## diffraction limited spot 
-    ##total_mask = np.ones_like(img, dtype=bool) 
-    
-    energy_spot = np.sum(img[spot_mask]) ## calculate energy based on radius
-    
-    print(energy_spot)
-    strehl = energy_spot / E9995
-    
+</div>
 
-    # ---- CSV WRITE ---- ## Add other values as desired? 
-    csv_name = "strehl_data.csv"
-    parent1 = os.path.dirname(image_path)
-    parent2 = os.path.dirname(parent1)
-    csv_path=os.path.join(parent2,csv_name)
+<script>
+// TAB SWITCH
+function showTab(tabId) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+}
 
-    append_strehl_to_csv(
-        csv_path, ## from current folder
-        image_path,
-        strehl,
-        diffraction_radius_um,
-        um_per_pixel,
-        r80_um,
-        r9995_um,
-        background_image_path
-    )
-    print("Data written to",csv_path )
+// IMAGE PROCESSING + STREHL
+document.getElementById('upload').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    if plot:
-        
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6), constrained_layout=True)
-        # -------- Left: Linear scale --------
-        im0 = axes[0].imshow(img, cmap="hot", origin="lower")
-        circle_strehl_0 = plt.Circle((cx, cy),radius_px,color="cyan",linestyle="--",fill=False,lw=2,
-            label=f"Diffr. lim. spot (Strehl = {strehl:.4f})"
-        )
-        circle_80_0 = plt.Circle((cx, cy),r80_px,color="blue", linestyle="-.",fill=False,lw=2,
-            label=f"80% encircled energy radius = {np.round(r80_um, 4)} µm"
-        )
-        axes[0].add_patch(circle_strehl_0)
-        axes[0].add_patch(circle_80_0)
-        axes[0].set_title(os.path.basename(image_path))
-        fig.colorbar(im0, ax=axes[0], label="Counts")
-        axes[0].legend()
-        
-        # -------- Right: Log scale --------
-        im1 = axes[1].imshow(img, cmap="hot", origin="lower", norm="log")
-        circle_strehl_1 = plt.Circle((cx, cy),radius_px,color="cyan",linestyle="--",fill=False,lw=2,
-            label=f"Diffr. lim. spot (Strehl = {strehl:.4f})"
-        )
-        circle_80_1 = plt.Circle((cx, cy),r80_px,color="blue",linestyle="-.",fill=False,lw=2,
-            label=f"80% encircled energy radius = {np.round(r80_um, 4)} µm"
-        )
-        axes[1].add_patch(circle_strehl_1)
-        axes[1].add_patch(circle_80_1)
-        axes[1].set_title("Log scale")
-        fig.colorbar(im1, ax=axes[1], label="Counts")
-        axes[1].legend()
-        
-        
-        plt.show()
+    const img = document.getElementById('preview');
+    const reader = new FileReader();
 
+    reader.onload = ev => img.src = ev.target.result;
+    reader.readAsDataURL(file);
 
-    return strehl,r80_um
+    img.onload = function() {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
 
-## change based on system 
-##image_path = "Focal_Spot_Images/Focal_Spot_Tests/10mJ_New_Optimized_FocalSpotWithDPM_2025-07-17_1109AM.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/20250627Optimized_focal_spot_wObjective_wPM_exptime3e3.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/FocalSpot_vac_3-5-26.tiff" 
-#
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM.tiff"
-image_path = "Focal_Spot_Images/Focal_Spot_Tests/Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
-## synology focal spot: 
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer_2_matching_WFS_mask.tiff"
-image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\Image__2026-03-06__17-18-43_SR55_FULL_VACUUM_Apodizer.tiff"
-##03092026
-##image_path = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Images\3-9-26_focalspots_batch_morefiltering"
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
 
-## backgrounds 
-background_path_TA1 = "S:\TA1\Focal_Spot_Data\TA1_Focal_Spot_Backgrounds\TA1_Background_03092026_SN_40483695.tiff"
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-## Optical parameters for Diffraction spot size calculation
-#### TA2 values 
-wavelength_nm = 800
-beam_diameter_inch = 3.267
-focal_length_inch = 8
-####
-####TA1 Values ## Need to update; if they  are going to be reused store in dictionary? 
-# ## github not pushed after adding different parameters 
-##
-TA1_PW_wavelength_nm = 800
-TA1_PW_beam_diameter_inch = 12
-TA1_PW_focal_length_inch = 12*60 ## 60 
-##
-TA1_TW_wavelength_nm = 800
-TA1_TW_beam_diameter_inch = 3.267
-TA1_TW_focal_length_inch = 8
-####
-# Camera calibration
-um_per_pixel = 0.085416666667 ## TA2 
-um_per_pixel = 1/63.288 ## TA1 ## Focal spot camera???
-um_per_pixel = 3.45## TA1 Output reference  /a2a1920-51gmpro (model number of camera used output_ref)
+        const width = canvas.width;
+        const height = canvas.height;
 
-# Calculated Diffraction limit spot radius
-spot_radius_um = diffraction_limited_spot_size(TA1_PW_wavelength_nm,TA1_PW_beam_diameter_inch,TA1_PW_focal_length_inch)
-#### Can enter diffraction limited spot radius by hand if you want 
-## spot_radius_um = 2.7
+        let intensity = new Array(width * height);
+        let total = 0;
 
-strehl,r80_um = strehl_from_image(
-    image_path,
-    um_per_pixel ,
-    spot_radius_um,
-    background_image_path=background_path_TA1, ## added background
-    plot=True,
-)
+        for (let i = 0; i < data.length; i += 4) {
+            let idx = i/4;
+            let I = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+            intensity[idx] = I;
+            total += I;
+        }
 
-print(f"Diffraction limit = {spot_radius_um:.4f}")
-print(f"Strehl ratio from = {strehl:.4f}")
-print(f"80% enclosed enregy radius = {r80_um:.4f}")
+        // centroid
+        let xSum=0, ySum=0;
+        for (let y=0; y<height; y++) {
+            for (let x=0; x<width; x++) {
+                let I = intensity[y*width + x];
+                xSum += x*I;
+                ySum += y*I;
+            }
+        }
 
+        let x0 = xSum/total;
+        let y0 = ySum/total;
 
-## Further improvements/calculations that can be included
-## Add parameter for energy: to calculate a0, 
-##      Paul suggests calcaulate teh r80: the radius which incircles 80% of the energy
-##      Background subtraction feature 
-## Image/data management -> not putting a bunch of focal spot images on github, just pull them from synology. 
-## -Now There is a folder in synology/TA1 called Focal_Spot_Images which has -> TA1_Focal_Spot_Backgrounds and -> TA1_Focal_Spot_Images
+        let radial = [];
+
+        for (let y=0; y<height; y++) {
+            for (let x=0; x<width; x++) {
+                let I = intensity[y*width + x];
+                let r = Math.sqrt((x-x0)**2 + (y-y0)**2);
+                radial.push({r,I});
+            }
+        }
+
+        radial.sort((a,b)=>a.r-b.r);
+
+        let cumulative=0;
+        let target = 0.8*total;
+        let r_pix=0;
+
+        for (let i=0; i<radial.length; i++) {
+            cumulative += radial[i].I;
+            if (cumulative >= target) {
+                r_pix = radial[i].r;
+                break;
+            }
+        }
+
+        let um_per_pixel = parseFloat(document.getElementById('um_per_pixel').value);
+        let r_dl = parseFloat(document.getElementById('r_dl').value);
+
+        let r_um = r_pix * um_per_pixel;
+
+        let strehl = (r_dl / r_um)**2;
+
+        document.getElementById('result').innerText =
+            `r₈₀ = ${r_pix.toFixed(2)} px (${r_um.toFixed(2)} µm)\nStrehl ≈ ${strehl.toFixed(3)}`;
+    };
+});
+
+// RAYLEIGH
+function calcRayleigh() {
+    let fnum = parseFloat(document.getElementById('fnum').value);
+    let lambda = parseFloat(document.getElementById('lambda').value);
+
+    let w0 = lambda * fnum / Math.PI;
+    let zR = Math.PI * w0 * w0 / lambda;
+
+    document.getElementById('rayleighResult').innerText =
+        `zR = ${zR.toExponential(3)} m`;
+}
+
+// GAUSSIAN
+function calcGaussian() {
+    let w0 = parseFloat(document.getElementById('w0_g').value);
+    let lambda = parseFloat(document.getElementById('lambda_g').value);
+    let z = parseFloat(document.getElementById('z_g').value);
+
+    let zR = Math.PI * w0 * w0 / lambda;
+    let w = w0 * Math.sqrt(1 + (z/zR)**2);
+
+    document.getElementById('gaussianResult').innerText =
+        `w(z) = ${w.toExponential(3)} m`;
+}
+</script>
+
+</body>
+</html>
