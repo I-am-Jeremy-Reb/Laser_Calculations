@@ -511,7 +511,7 @@ function decodeTIFF(arrayBuffer) {
       <div class="feature-grid">
         <div class="feature-item">
           <div class="f-label">Spot Calculation</div>
-          <div class="f-desc">Upload a TIFF beam image and compute the 80% encircled energy radius. Optionally provide a µm/pixel scale to get physical units.</div>
+          <div class="f-desc">Upload a TIFF beam image and compute the 86.5% encircled energy radius. Optionally provide a µm/pixel scale to get physical units.</div>
         </div>
         <div class="feature-item">
           <div class="f-label">Gaussian Beam</div>
@@ -533,13 +533,13 @@ function decodeTIFF(arrayBuffer) {
   <!-- ═══ SPOT CALCULATION ═══ -->
   <div id="spot" class="tab">
     <div class="card">
-      <h2>Spot Calculation — 80% Encircled Energy</h2>
+      <h2>Spot Calculation — 86.5% Encircled Energy</h2>
 
       <div class="eq-block">
-        \( E(r) = \displaystyle\int_0^r I(r')\, 2\pi r'\, dr' \quad\Rightarrow\quad r_{80} : E(r_{80}) = 0.8\, E_\text{total} \)
+        \( E(r) = \displaystyle\int_0^r I(r')\, 2\pi r'\, dr' \quad\Rightarrow\quad r_{86.5} : E(r_{86.5}) = 0.865\, E_\text{total} \)
       </div>
 
-      <p>Upload a TIFF beam profile image. The algorithm computes the intensity centroid, then finds the radius containing 80% of the total encircled energy.</p>
+      <p>Upload a TIFF beam profile image. The algorithm computes the intensity centroid, then finds the radius containing 86.5% of the total encircled energy.</p>
 
       <input type="file" id="upload" accept=".tif,.tiff">
       <div id="fileStatus">No file loaded.</div>
@@ -557,8 +557,8 @@ function decodeTIFF(arrayBuffer) {
 
       <div class="btn-group">
         <button class="btn btn-secondary" onclick="showImage()">Show Image</button>
-        <button class="btn btn-primary" onclick="calculateEE()">Calculate r₈₀</button>
-        <button class="btn btn-secondary" onclick="plotCircle()">Draw 80% Circle</button>
+        <button class="btn btn-primary" onclick="calculateEE()">Calculate 1/e^2 radius </button>
+        <button class="btn btn-secondary" onclick="plotCircle()">Draw 86.5% Circle</button>
         <button class="btn btn-secondary" onclick="plotDiffractionLimit()">Draw Diffraction Limit</button>
       </div>
 
@@ -877,7 +877,7 @@ for (let i = 0; i < N; i++) {
 }
 
 // Threshold (adjustable!)
-const threshold = 0.10 * Imax;  // 5% of peak — very robust
+const threshold = 0.10 * Imax;  // 10% of peak — very robust
 
 let xSum = 0, ySum = 0, weightSum = 0;
 
@@ -918,7 +918,9 @@ cy = ySum / weightSum;
   }
   radial.sort((a, b) => a.r - b.r);
 
-  const target = 0.8 * total;
+  const target = 0.865 * total; // Changing Target to 86.5 = e^2 diameter 
+  // r80 is actually 86.5 = 1/e^2 diameter
+  
   let cumulative = 0;
   r80 = 0;
   for (let i = 0; i < radial.length; i++) {
@@ -926,7 +928,7 @@ cy = ySum / weightSum;
     if (cumulative >= target) { r80 = radial[i].r; break; }
   }
 
-  let html = `<div class="result-label">80% Encircled Energy Radius</div>`;
+  let html = `<div class="result-label">86.5% Encircled Energy Radius</div>`;
   html += `r₈₀ = ${r80.toFixed(2)} px`;
 
   const um  = parseFloat(document.getElementById('um_per_pixel').value);
@@ -967,10 +969,18 @@ function plotDiffractionLimit() {
 
   const rdl_px = rdl / um;
   const r80_um = r80 * um;
-  // Strehl: (DL_radius / measured_radius)^2 — ratio of areas
+  // 
+  // assume S =1 if r80 = rdl 
+  // total = total energy in image 
+  //target = energy in 86.5
+  // S should be radius_Energy_diffraction_limit/radius_e^2_energy
   const strehl = (rdl / r80_um) ** 2;
 
+  //
+  //
+  
   // Show Strehl in a dedicated result box
+  
   let shtml = `<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
   shtml += `DL radius = ${rdl.toFixed(2)} µm (${rdl_px.toFixed(1)} px)`;
   shtml += `&nbsp;&nbsp;|&nbsp;&nbsp;r₈₀ = ${r80_um.toFixed(2)} µm`;
