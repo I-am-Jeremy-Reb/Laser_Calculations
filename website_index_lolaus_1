@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOLAUS — Laser Optics Toolkit</title>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<script>
+// Self-contained TIFF decoder — zero external dependencies.
+// Handles: uncompressed 8-bit and 16-bit grayscale, RGB, and RGBA TIFFs,
+// both little-endian (II) and big-endian (MM), single or multi-strip.
+// This covers virtually all scientific camera output formats.
+function decodeTIFF(arrayBuffer) {
+  const dv   = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  const hdr  = dv.getUint16(0, false);
+  if (hdr !== 0x4949 && hdr !== 0x4D4D) throw new Error('Not a TIFF file (bad header)');
+  const le   = (hdr === 0x4949);
+  const r16  = o => dv.getUint16(o, le);
+  const r32  = o => dv.getUint32(o, le);
+  if (r16(2) !== 42) throw new Error('Not a valid TIFF (magic number mismatch)');
+
+  // --- Read IFD tags ---
+  const tags = {};
+  let ifdOff = r32(4);
+  const n = r16(ifdOff); ifdOff += 2;
+  for (let i = 0; i < n; i++) {
+    const b     = ifdOff + i * 12;
+    const tag   = r16(b);
+    const type  = r16(b + 2);
+    const count = r32(b + 4);
+    // Read value/offset field
+    const readVal = (type, offset) => {
+      if (type === 3)  return r16(offset);   // SHORT
+      if (type === 4)  return r32(offset);   // LONG
+      if (type === 1)  return bytes[offset]; // BYTE
+      return r32(offset);
+    };
+    // For multi-value SHORT arrays, read all values from their offset
+    if (type === 3 && count > 1) {
+      const dataOff = count * 2 <= 4 ? b + 8 : r32(b + 8);
+      const arr = [];
+      for (let j = 0; j < count; j++) arr.push(r16(dataOff + j * 2));
+      tags[tag] = arr;
+    } else if (type === 4 && count > 1) {
+      const dataOff = r32(b + 8);
+      const arr = [];
+      for (let j = 0; j < count; j++) arr.push(r32(dataOff + j * 4));
+      tags[tag] = arr;
+    } else {
+      tags[tag] = readVal(type, b + 8);
+    }
+  }
+
+  const width       = tags[256];
+  const height      = tags[257];
+  const bpsRaw      = tags[258];  // BitsPerSample (may be array)
+  const compression = tags[259] || 1;
+  const spp         = tags[277] || 1; // SamplesPerPixel
+  const stripOffs   = tags[273];      // StripOffsets
+  const stripCounts = tags[279];      // StripByteCounts
+
+  if (!width || !height) throw new Error('TIFF missing width/height tags');
+  if (compression !== 1) throw new Error(
+    `Compression type ${compression} is not supported. Please re-save as uncompressed TIFF.`
+  );
+
+  const bps = Array.isArray(bpsRaw) ? bpsRaw[0] : (bpsRaw || 8);
+  if (bps !== 8 && bps !== 16) throw new Error(`${bps}-bit TIFF not supported (only 8 and 16-bit)`);
+
+  const bytesPS = bps === 16 ? 2 : 1;
+  const maxVal  = bps === 16 ? 65535 : 255;
+  const rgba    = new Uint8ClampedArray(width * height * 4);
+
+  // Normalise strip arrays
+  const offsets = Array.isArray(stripOffs) ? stripOffs : [stripOffs];
+  const counts  = stripCounts
+    ? (Array.isArray(stripCounts) ? stripCounts : [stripCounts])
+    : [width * height * spp * bytesPS];
+
+  const readSample = (ptr) => {
+    if (bps === 16) {
+      const raw = le
+        ? (bytes[ptr] | (bytes[ptr + 1] << 8))
+        : ((bytes[ptr] << 8) | bytes[ptr + 1]);
+      return Math.round((raw / maxVal) * 255);
+    }
+    return bytes[ptr];
+  };
+
+  let pixelIdx = 0;
+  for (let s = 0; s < offsets.length; s++) {
+    let ptr = offsets[s];
+    const stripPixels = Math.floor(counts[s] / (bytesPS * spp));
+    for (let p = 0; p < stripPixels && pixelIdx < width * height; p++, pixelIdx++) {
+      let r, g, b;
+      if (spp === 1) {
+        const v = readSample(ptr); ptr += bytesPS;
+        r = g = b = v;
+      } else if (spp >= 3) {
+        r = readSample(ptr);          ptr += bytesPS;
+        g = readSample(ptr);          ptr += bytesPS;
+        b = readSample(ptr);          ptr += bytesPS;
+        if (spp === 4) ptr += bytesPS; // skip alpha; we set it to 255
+      }
+      rgba[pixelIdx * 4]     = r;
+      rgba[pixelIdx * 4 + 1] = g;
+      rgba[pixelIdx * 4 + 2] = b;
+      rgba[pixelIdx * 4 + 3] = 255;
+    }
+  }
+  return { rgba, width, height };
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #161920;
+    --surface2: #1e2230;
+    --border: #2a2f3d;
+    --accent: #00d4a0;
+    --accent2: #4a9eff;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --danger: #ff6b6b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+  }
+  .logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+  .logo span { color: var(--muted); font-weight: 400; }
+
+  /* NAV TABS */
+  nav {
+    display: flex;
+    gap: 4px;
+  }
+  nav button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  nav button:hover { color: var(--text); border-color: var(--border); }
+  nav button.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(0, 212, 160, 0.08);
+  }
+
+  /* CONTENT */
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+
+  .tab { display: none; }
+  .tab.active { display: block; }
+
+  /* CARDS */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card h3 {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    margin: 20px 0 8px;
+  }
+  .card p {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  /* HOME TAB */
+  .hero-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .hero-title span { color: var(--accent); }
+  .hero-sub {
+    font-size: 15px;
+    color: var(--muted);
+    margin-bottom: 28px;
+  }
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .feature-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 18px;
+  }
+  .feature-item .f-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .feature-item .f-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .logo-row {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .logo-placeholder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 14px;
+  }
+  .dev-line {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+  .dev-line a { color: var(--accent); text-decoration: none; }
+  .dev-line a:hover { text-decoration: underline; }
+
+  /* FORM ELEMENTS */
+  .input-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+    align-items: flex-end;
+  }
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 1;
+    min-width: 160px;
+  }
+  .input-group label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  input[type="text"], input[type="number"] {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  input[type="text"]:focus, input[type="number"]:focus {
+    border-color: var(--accent);
+  }
+  input[type="file"] {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface2);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    cursor: pointer;
+    width: 100%;
+    transition: border-color 0.15s;
+  }
+  input[type="file"]:hover { border-color: var(--accent); }
+
+  .btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 9px 18px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #0d0f14;
+    border: 1px solid var(--accent);
+  }
+  .btn-primary:hover { background: #00f0b8; }
+  .btn-secondary {
+    background: transparent;
+    color: var(--accent2);
+    border: 1px solid var(--accent2);
+  }
+  .btn-secondary:hover { background: rgba(74, 158, 255, 0.1); }
+  .btn-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+
+  /* RESULT BOX */
+  .result-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    color: var(--accent);
+    display: none;
+  }
+  .result-box.visible { display: block; }
+  .result-box .result-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+
+  /* CANVAS */
+  .canvas-wrap {
+    margin-top: 20px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+    display: none;
+    position: relative;
+  }
+  .canvas-wrap.visible { display: block; }
+  .canvas-wrap canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* GAUSSIAN PLOT */
+  #gaussianCanvas {
+    display: block;
+    max-width: 100%;
+    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+  }
+
+  /* EQUATION BLOCK */
+  .eq-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    text-align: center;
+    font-size: 15px;
+    color: var(--text);
+  }
+
+  /* STATUS badge */
+  .status-badge {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-left: 8px;
+  }
+  .status-ok { background: rgba(0,212,160,0.15); color: var(--accent); }
+  .status-wait { background: rgba(255,200,0,0.12); color: #ffc800; }
+
+  #fileStatus { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+  .plot-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    text-align: center;
+    padding: 4px 0 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* RESULTS TABLE */
+  #resultsTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+  }
+  #resultsTable th {
+    text-align: left;
+    padding: 7px 12px;
+    background: var(--surface2);
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  #resultsTable td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+  }
+  #resultsTable tbody tr:last-child td { border-bottom: none; }
+  #resultsTable tbody tr:hover td { background: var(--surface2); }
+  #resultsTable td.accent { color: var(--accent); font-weight: 500; }
+  #resultsTable td.warn   { color: #ffc800; }
+  #resultsTable td.muted  { color: var(--muted); }
+  #resultsTable td.fname  { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Laser OnLine Analysis for Users of pettawatt Systems <span>// (LOLAUS)</span></div>
+  <nav>
+    <button class="active" onclick="showTab('home', this)">Home</button>
+    <button onclick="showTab('spot', this)">Spot Calculation</button>
+    <button onclick="showTab('gaussian', this)">Gaussian</button>
+  </nav>
+</header>
+
+<div class="container">
+
+  <!-- ═══ HOME ═══ -->
+  <div id="home" class="tab active">
+    <div class="card">
+      <div class="hero-title">Laser <span>Optics</span> Toolkit</div>
+      <div class="hero-sub">Diagnostics and beam analysis tools for laser plasma physics</div>
+
+      <div class="feature-grid">
+        <div class="feature-item">
+          <div class="f-label">Spot Calculation</div>
+          <div class="f-desc">Upload a TIFF beam image and compute the 80% encircled energy radius. Optionally provide a µm/pixel scale to get physical units.</div>
+        </div>
+        <div class="feature-item">
+          <div class="f-label">Gaussian Beam</div>
+          <div class="f-desc">Compute the beam waist w(z) at a distance z from focus given w₀ and wavelength λ. Plots the full propagation profile.</div>
+        </div>
+      </div>
+
+      <p>This toolkit is designed for quick in-lab diagnostics. All processing runs locally in your browser — no data is uploaded to any server.</p>
+
+      <div class="logo-row">
+        <div class="logo-placeholder">⚡ ZEUS Facility</div>
+        <div class="logo-placeholder">◈ NSF</div>
+        <div style="flex:1"></div>
+        <div class="dev-line">Developer: <a href="https://sites.google.com/view/jeremy-rebenstock/about" target="_blank">Jeremy Rebenstock</a></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SPOT CALCULATION ═══ -->
+  <div id="spot" class="tab">
+    <div class="card">
+      <h2>Spot Calculation — 80% Encircled Energy</h2>
+
+      <div class="eq-block">
+        \( E(r) = \displaystyle\int_0^r I(r')\, 2\pi r'\, dr' \quad\Rightarrow\quad r_{80} : E(r_{80}) = 0.8\, E_\text{total} \)
+      </div>
+
+      <p>Upload a TIFF beam profile image. The algorithm computes the intensity centroid, then finds the radius containing 80% of the total encircled energy.</p>
+
+      <input type="file" id="upload" accept=".tif,.tiff">
+      <div id="fileStatus">No file loaded.</div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label>microns per pixel (optional)</label>
+          <input type="number" id="um_per_pixel" placeholder="e.g. 3.45" step="any" min="0">
+        </div>
+        <div class="input-group">
+          <label>Diffraction limit radius (microns , optional)</label>
+          <input type="number" id="r_dl" placeholder="e.g. 5.0" step="any" min="0">
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-secondary" onclick="showImage()">Show Image</button>
+        <button class="btn btn-primary" onclick="calculateEE()">Calculate r₈₀</button>
+        <button class="btn btn-secondary" onclick="plotCircle()">Draw 80% Circle</button>
+        <button class="btn btn-secondary" onclick="plotDiffractionLimit()">Draw Diffraction Limit</button>
+      </div>
+
+      <div id="eeResult" class="result-box"></div>
+      <div id="dlResult" class="result-box" style="border-left-color:#ff9500;"></div>
+
+      <div id="plotsRow" style="display:none; flex-wrap:wrap; gap:12px; margin-top:20px;">
+        <div style="flex:1; min-width:280px;">
+          <div class="plot-title" id="titleLinear"></div>
+          <div class="canvas-wrap visible" style="margin-top:6px;">
+            <canvas id="spotCanvas"></canvas>
+          </div>
+        </div>
+        <div style="flex:1; min-width:280px;">
+          <div class="plot-title" id="titleLog"></div>
+          <div class="canvas-wrap visible" style="margin-top:6px;">
+            <canvas id="spotCanvasLog"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results table -->
+      <div id="resultsTableWrap" style="margin-top:24px; display:none;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em;">Measurement Log</span>
+          <button class="btn btn-secondary" style="padding:5px 12px; font-size:11px;" onclick="clearTable()">Clear</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>r₈₀ (px)</th>
+                <th>r₈₀ (µm)</th>
+                <th>DL (µm)</th>
+                <th>Strehl</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══ GAUSSIAN ═══ -->
+  <div id="gaussian" class="tab">
+    <div class="card">
+      <h2>Gaussian Beam Propagation</h2>
+
+      <div class="eq-block">
+        \( w(z) = w_0\,\sqrt{1 + \!\left(\dfrac{z}{z_R}\right)^{\!2}}, \qquad z_R = \dfrac{\pi w_0^2}{\lambda} \)
+      </div>
+
+      <p>Enter the beam waist w₀ and wavelength λ to compute the beam size w(z) at a distance z from the focus. The plot shows the full beam envelope.</p>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label>Beam waist w₀ (m)</label>
+          <input type="number" id="w0_g" placeholder="e.g. 50e-6" step="any">
+        </div>
+        <div class="input-group">
+          <label>Wavelength λ (m)</label>
+          <input type="number" id="lambda_g" placeholder="e.g. 800e-9" step="any">
+        </div>
+        <div class="input-group">
+          <label>Distance z (m)</label>
+          <input type="number" id="z_g" placeholder="e.g. 0.05" step="any">
+        </div>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="calcGaussian()">Calculate & Plot</button>
+      </div>
+
+      <div id="gaussianResult" class="result-box"></div>
+
+      <canvas id="gaussianCanvas" style="display:none;"></canvas>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ─── TAB SWITCHING ────────────────────────────────────────────────
+function showTab(id, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (window.MathJax) MathJax.typesetPromise();
+}
+
+// ─── TIFF LOAD ────────────────────────────────────────────────────
+let rawData = null, imgWidth = 0, imgHeight = 0;
+let cx = 0, cy = 0, r80 = 0;
+let currentFileName = '';
+let intensityData = null; // store clean intensity array for log rendering
+
+document.getElementById('upload').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  currentFileName = file.name.replace(/\.[^.]+$/, ''); // strip extension
+  const statusEl = document.getElementById('fileStatus');
+  statusEl.innerHTML = 'Loading <span class="status-badge status-wait">reading…</span>';
+
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      const result = decodeTIFF(ev.target.result);
+      rawData   = result.rgba;
+      imgWidth  = result.width;
+      imgHeight = result.height;
+      intensityData = null; // reset on new file
+      r80 = 0; cx = 0; cy = 0;
+      document.getElementById('plotsRow').style.display = 'none';
+      statusEl.innerHTML = `${file.name} &nbsp;<span class="status-badge status-ok">${imgWidth} × ${imgHeight} px</span>`;
+    } catch(err) {
+      statusEl.innerHTML = `<span style="color:var(--danger)">Error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+// ─── BUILD INTENSITY ARRAY ───────────────────────────────────────
+// 1. Auto-detects and subtracts the camera noise floor (readout noise)
+//    by finding the most-common low-level value in the histogram.
+// 2. Replaces burnt pixels (saturated) with local 5×5 neighbourhood median.
+function buildIntensity() {
+  const N = imgWidth * imgHeight;
+  const raw = new Float64Array(N);
+
+  // Build histogram and find data max
+  const hist = new Uint32Array(256);
+  let dataMax = 0;
+  for (let i = 0; i < N; i++) {
+    const v = rawData[i * 4]; // R channel (== G == B for grayscale)
+    raw[i] = v;
+    hist[v]++;
+    if (v > dataMax) dataMax = v;
+  }
+
+  // ── Noise floor detection ─────────────────────────────────────
+  // The noise floor is the most-frequently-occurring value in the
+  // range [1, ~10% of max]. Camera readout noise typically lands at
+  // a single value (commonly 1) which dominates the histogram.
+  // We find the peak of hist[1..ceil(0.1*dataMax)] and use that as
+  // the floor to subtract before all calculations.
+  const floorSearchMax = Math.max(2, Math.ceil(dataMax * 0.10));
+  let noisePeak = 0, noisePeakCount = 0;
+  for (let v = 1; v <= floorSearchMax; v++) {
+    if (hist[v] > noisePeakCount) { noisePeakCount = hist[v]; noisePeak = v; }
+  }
+  // Only subtract if this noise value is genuinely dominant
+  // (accounts for > 1% of all pixels)
+  const noiseFloor = (noisePeakCount > N * 0.01) ? noisePeak : 0;
+
+  // ── Burnt pixel threshold ─────────────────────────────────────
+  const burnThresh = Math.max(254, dataMax * 0.99);
+  let burntCount = 0;
+
+  // First pass: subtract noise floor and flag burnt pixels
+  const cleaned = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const v = raw[i];
+    if (v >= burnThresh) { burntCount++; cleaned[i] = -1; } // mark for repair
+    else cleaned[i] = Math.max(0, v - noiseFloor);
+  }
+
+  // Second pass: replace burnt pixels with 5×5 neighbourhood median
+  for (let y = 0; y < imgHeight; y++) {
+    for (let x = 0; x < imgWidth; x++) {
+      const idx = y * imgWidth + x;
+      if (cleaned[idx] !== -1) continue;
+      burntCount; // already counted
+      const nb = [];
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < imgHeight && nx >= 0 && nx < imgWidth) {
+            const nv = cleaned[ny * imgWidth + nx];
+            if (nv >= 0) nb.push(nv);
+          }
+        }
+      }
+      if (nb.length > 0) {
+        nb.sort((a, b) => a - b);
+        cleaned[idx] = nb[Math.floor(nb.length / 2)];
+      } else {
+        cleaned[idx] = 0;
+      }
+    }
+  }
+
+  return { intensity: cleaned, burntCount, noiseFloor, dataMax };
+}
+
+// ─── RENDER LINEAR IMAGE ──────────────────────────────────────────
+function renderLinear(canvas, intensity) {
+  canvas.width  = imgWidth;
+  canvas.height = imgHeight;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(imgWidth, imgHeight);
+  const N = imgWidth * imgHeight;
+  let iMax = 0;
+  for (let i = 0; i < N; i++) if (intensity[i] > iMax) iMax = intensity[i];
+  const scale = iMax > 0 ? 255 / iMax : 1;
+  for (let i = 0; i < N; i++) {
+    const v = Math.round(intensity[i] * scale);
+    imgData.data[i*4]   = v;
+    imgData.data[i*4+1] = v;
+    imgData.data[i*4+2] = v;
+    imgData.data[i*4+3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// ─── RENDER LOG IMAGE ─────────────────────────────────────────────
+// Uses a false-colour (hot) colormap: black→red→yellow→white
+function renderLog(canvas, intensity) {
+  canvas.width  = imgWidth;
+  canvas.height = imgHeight;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(imgWidth, imgHeight);
+  const N = imgWidth * imgHeight;
+
+  let iMax = 0;
+  for (let i = 0; i < N; i++) if (intensity[i] > iMax) iMax = intensity[i];
+
+  const logMax = Math.log10(iMax + 1);
+
+  for (let i = 0; i < N; i++) {
+    const logV = Math.log10(intensity[i] + 1);
+    const t = logMax > 0 ? logV / logMax : 0; // 0→1
+
+    // "Hot" colormap: black(0) → red(0.33) → yellow(0.67) → white(1)
+    let r, g, b;
+    if (t < 1/3) {
+      r = Math.round(t * 3 * 255); g = 0; b = 0;
+    } else if (t < 2/3) {
+      r = 255; g = Math.round((t - 1/3) * 3 * 255); b = 0;
+    } else {
+      r = 255; g = 255; b = Math.round((t - 2/3) * 3 * 255);
+    }
+    imgData.data[i*4]   = r;
+    imgData.data[i*4+1] = g;
+    imgData.data[i*4+2] = b;
+    imgData.data[i*4+3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// ─── DRAW OVERLAYS (circle + centroid) on a canvas ───────────────
+function drawOverlays(canvas) {
+  const ctx = canvas.getContext('2d');
+  const lw = Math.max(1, imgWidth / 600);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r80, 0, 2 * Math.PI);
+  ctx.strokeStyle = '#00d4a0';
+  ctx.lineWidth = lw * 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(2, imgWidth / 400), 0, 2 * Math.PI);
+  ctx.fillStyle = '#4a9eff';
+  ctx.fill();
+}
+
+// ─── SHOW BOTH PLOTS ─────────────────────────────────────────────
+function showBothPlots(withOverlay) {
+  const canvasLin = document.getElementById('spotCanvas');
+  const canvasLog = document.getElementById('spotCanvasLog');
+
+  renderLinear(canvasLin, intensityData);
+  renderLog(canvasLog, intensityData);
+
+  if (withOverlay && r80 > 0) {
+    drawOverlays(canvasLin);
+    drawOverlays(canvasLog);
+  }
+
+  document.getElementById('titleLinear').textContent = currentFileName + ' — linear';
+  document.getElementById('titleLog').textContent    = currentFileName + ' — log scale';
+  document.getElementById('plotsRow').style.display  = 'flex';
+}
+
+// ─── SHOW IMAGE (button) ──────────────────────────────────────────
+function showImage() {
+  if (!rawData) { alert('Please upload a TIFF file first.'); return; }
+  if (!intensityData) {
+    const result = buildIntensity();
+    intensityData = result.intensity;
+  }
+  showBothPlots(r80 > 0);
+}
+
+// ─── CALCULATE 80% ENCIRCLED ENERGY ──────────────────────────────
+function calculateEE() {
+  if (!rawData) { alert('Please upload a TIFF file first.'); return; }
+
+  const { intensity, burntCount, noiseFloor, dataMax } = buildIntensity();
+  intensityData = intensity;
+
+  const N = imgWidth * imgHeight;
+  let total = 0;
+  for (let i = 0; i < N; i++) total += intensity[i];
+
+  if (total === 0) { showResult('eeResult', 'Error: image appears to be all black.', true); return; }
+
+// ─── ROBUST CENTROID (thresholded) ───────────────────────────────
+
+// Find max intensity
+let Imax = 0;
+for (let i = 0; i < N; i++) {
+  if (intensity[i] > Imax) Imax = intensity[i];
+}
+
+// Threshold (adjustable!)
+const threshold = 0.10 * Imax;  // 5% of peak — very robust
+
+let xSum = 0, ySum = 0, weightSum = 0;
+
+for (let y = 0; y < imgHeight; y++) {
+  for (let x = 0; x < imgWidth; x++) {
+    const I = intensity[y * imgWidth + x];
+
+    if (I < threshold) continue;  // IGNORE NOISE
+
+    xSum += x * I;
+    ySum += y * I;
+    weightSum += I;
+  }
+}
+
+// Fallback if threshold too aggressive
+if (weightSum === 0) {
+  for (let y = 0; y < imgHeight; y++) {
+    for (let x = 0; x < imgWidth; x++) {
+      const I = intensity[y * imgWidth + x];
+      xSum += x * I;
+      ySum += y * I;
+      weightSum += I;
+    }
+  }
+}
+
+cx = xSum / weightSum;
+cy = ySum / weightSum;
+
+  // Radial sort for encircled energy
+  const radial = new Array(N);
+  for (let y = 0; y < imgHeight; y++) {
+    for (let x = 0; x < imgWidth; x++) {
+      const idx = y * imgWidth + x;
+      radial[idx] = { r: Math.sqrt((x - cx)**2 + (y - cy)**2), I: intensity[idx] };
+    }
+  }
+  radial.sort((a, b) => a.r - b.r);
+
+  const target = 0.8 * total;
+  let cumulative = 0;
+  r80 = 0;
+  for (let i = 0; i < radial.length; i++) {
+    cumulative += radial[i].I;
+    if (cumulative >= target) { r80 = radial[i].r; break; }
+  }
+
+  let html = `<div class="result-label">80% Encircled Energy Radius</div>`;
+  html += `r₈₀ = ${r80.toFixed(2)} px`;
+
+  const um  = parseFloat(document.getElementById('um_per_pixel').value);
+  const rdl = parseFloat(document.getElementById('r_dl').value);
+  if (!isNaN(um) && um > 0) {
+    const r_um = r80 * um;
+    html += `&nbsp;&nbsp;|&nbsp;&nbsp;${r_um.toFixed(2)} µm`;
+    if (!isNaN(rdl) && rdl > 0) {
+      const strehl = (rdl / r_um) ** 2;
+      html += `&nbsp;&nbsp;|&nbsp;&nbsp;Strehl ≈ ${strehl.toFixed(3)}`;
+    }
+  }
+  html += `<br><span style="font-size:11px;color:var(--muted);margin-top:6px;display:block">`;
+  html += `centroid: (${cx.toFixed(1)}, ${cy.toFixed(1)}) px`;
+  if (noiseFloor > 0) html += `&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#8892a4">noise floor ${noiseFloor} subtracted</span>`;
+  if (burntCount > 0) html += `&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#ffc800">${burntCount} burnt pixel${burntCount>1?'s':''} corrected</span>`;
+  html += `</span>`;
+  showResult('eeResult', html);
+
+  showBothPlots(false);
+}
+
+// ─── DRAW 80% CIRCLE ─────────────────────────────────────────────
+function plotCircle() {
+  if (r80 === 0) { alert('Run Calculate r₈₀ first.'); return; }
+  showBothPlots(true);
+}
+
+// ─── DRAW DIFFRACTION LIMIT CIRCLE ──────────────────────────────
+function plotDiffractionLimit() {
+  const um  = parseFloat(document.getElementById('um_per_pixel').value);
+  const rdl = parseFloat(document.getElementById('r_dl').value); // µm
+  if (isNaN(um) || um <= 0 || isNaN(rdl) || rdl <= 0) {
+    alert('Please enter both µm/pixel and diffraction limit radius (µm) to draw the diffraction limit circle.');
+    return;
+  }
+  if (!intensityData) { alert('Please run Calculate r\u2080 first.'); return; }
+
+  const rdl_px = rdl / um;
+  const r80_um = r80 * um;
+  // Strehl: (DL_radius / measured_radius)^2 — ratio of areas
+  const strehl = (rdl / r80_um) ** 2;
+
+  // Show Strehl in a dedicated result box
+  let shtml = `<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
+  shtml += `DL radius = ${rdl.toFixed(2)} µm (${rdl_px.toFixed(1)} px)`;
+  shtml += `&nbsp;&nbsp;|&nbsp;&nbsp;r₈₀ = ${r80_um.toFixed(2)} µm`;
+  shtml += `&nbsp;&nbsp;|&nbsp;&nbsp;<strong>Strehl ≈ ${strehl.toFixed(3)}</strong>`;
+  if (strehl > 1) shtml += `<span style="color:#ffc800;">&nbsp;(> 1: beam tighter than DL estimate)</span>`;
+  showResult('dlResult', shtml);
+
+  // Ensure plots are visible with 80% circle overlays
+  showBothPlots(r80 > 0);
+
+  // Draw DL circle on both canvases in orange/dashed
+  [document.getElementById('spotCanvas'), document.getElementById('spotCanvasLog')].forEach(canvas => {
+    const ctx = canvas.getContext('2d');
+    const lw = Math.max(1, imgWidth / 600);
+    ctx.beginPath();
+    ctx.arc(cx, cy, rdl_px, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#ff9500';
+    ctx.lineWidth = lw * 1.5;
+    ctx.setLineDash([Math.max(3, lw*4), Math.max(3, lw*3)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff9500';
+    const fs = Math.max(11, Math.round(imgWidth / 120));
+    ctx.font = `${fs}px IBM Plex Mono, monospace`;
+    ctx.fillText(`DL ${rdl.toFixed(1)}µm`, cx + rdl_px + 4, cy - fs);
+    ctx.fillText(`Strehl ${strehl.toFixed(3)}`, cx + rdl_px + 4, cy + fs * 0.2);
+  });
+
+  // Push row to measurement log table
+  addTableRow(currentFileName, r80, r80_um, rdl, strehl);
+}
+
+// ─── MEASUREMENT LOG TABLE ───────────────────────────────────────
+function addTableRow(fname, r80px, r80um, dlUm, strehl) {
+  const tbody = document.getElementById('resultsBody');
+  const tr = document.createElement('tr');
+  const strehlStr = strehl.toFixed(3);
+  const strehlClass = strehl >= 0.8 ? 'accent' : strehl >= 0.5 ? '' : 'warn';
+  tr.innerHTML = `
+    <td class="fname" title="${fname}">${fname}</td>
+    <td class="accent">${r80px.toFixed(2)}</td>
+    <td>${r80um.toFixed(2)}</td>
+    <td class="muted">${dlUm.toFixed(2)}</td>
+    <td class="${strehlClass}">${strehlStr}</td>`;
+  tbody.appendChild(tr);
+  document.getElementById('resultsTableWrap').style.display = 'block';
+}
+
+function clearTable() {
+  document.getElementById('resultsBody').innerHTML = '';
+  document.getElementById('resultsTableWrap').style.display = 'none';
+}
+
+// ─── GAUSSIAN BEAM ────────────────────────────────────────────────
+function calcGaussian() {
+  const w0     = parseFloat(document.getElementById('w0_g').value);
+  const lambda = parseFloat(document.getElementById('lambda_g').value);
+  const z      = parseFloat(document.getElementById('z_g').value);
+
+  if (isNaN(w0) || isNaN(lambda) || isNaN(z) || w0 <= 0 || lambda <= 0) {
+    showResult('gaussianResult', 'Please enter valid positive values for w₀ and λ.', true);
+    return;
+  }
+
+  const zR = Math.PI * w0 * w0 / lambda;
+  const wz = w0 * Math.sqrt(1 + (z / zR) ** 2);
+
+  let html = `<div class="result-label">Result at z = ${fmtSci(z)} m</div>`;
+  html += `z_R = ${fmtSci(zR)} m&nbsp;&nbsp;|&nbsp;&nbsp;w(z) = ${fmtSci(wz)} m`;
+  showResult('gaussianResult', html);
+
+  drawGaussianPlot(w0, lambda, zR, z);
+}
+
+function drawGaussianPlot(w0, lambda, zR, zTarget) {
+  const canvas = document.getElementById('gaussianCanvas');
+  canvas.style.display = 'block';
+  const W = 800, H = 260;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const pad = { t: 20, b: 40, l: 64, r: 24 };
+  const pw = W - pad.l - pad.r;
+  const ph = H - pad.t - pad.b;
+
+  ctx.fillStyle = '#1e2230';
+  ctx.fillRect(0, 0, W, H);
+
+  // Range: -4zR to +4zR
+  const zMin = -4 * zR, zMax = 4 * zR;
+  const wMax = w0 * Math.sqrt(1 + 16) * 1.05;
+
+  const toX = z => pad.l + (z - zMin) / (zMax - zMin) * pw;
+  const toY = w => pad.t + ph - (w / wMax) * ph;
+
+  // Grid
+  ctx.strokeStyle = '#2a2f3d';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (i / 4) * ph;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + pw, y); ctx.stroke();
+  }
+  for (let i = -4; i <= 4; i++) {
+    const z = i * zR;
+    const x = toX(z);
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ph); ctx.stroke();
+  }
+
+  // Axes
+  ctx.strokeStyle = '#3a4050';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t + ph); ctx.lineTo(pad.l + pw, pad.t + ph); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, pad.t + ph); ctx.stroke();
+
+  // Beam envelope (upper)
+  ctx.strokeStyle = '#00d4a0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const steps = 400;
+  for (let i = 0; i <= steps; i++) {
+    const z = zMin + (i / steps) * (zMax - zMin);
+    const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
+    const x = toX(z), y = toY(w);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Beam envelope (lower, mirror)
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const z = zMin + (i / steps) * (zMax - zMin);
+    const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
+    const x = toX(z), y = toY(-w) + 2 * (pad.t + ph / 2) - (pad.t + ph / 2);
+    // reflect around axis (w=0 line at bottom)
+    const yr = pad.t + ph + (pad.t + ph - toY(w));
+    if (yr > pad.t && yr < pad.t + ph + 2) {
+      i === 0 ? ctx.moveTo(x, yr) : ctx.lineTo(x, yr);
+    }
+  }
+  ctx.stroke();
+
+  // Fill between envelopes
+  ctx.fillStyle = 'rgba(0,212,160,0.07)';
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const z = zMin + (i / steps) * (zMax - zMin);
+    const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
+    const x = toX(z), y = toY(w);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  // bottom edge (w=0)
+  ctx.lineTo(toX(zMax), pad.t + ph);
+  ctx.lineTo(toX(zMin), pad.t + ph);
+  ctx.closePath();
+  ctx.fill();
+
+  // w₀ marker
+  ctx.strokeStyle = '#4a9eff';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  const x0px = toX(0);
+  ctx.beginPath(); ctx.moveTo(x0px, pad.t); ctx.lineTo(x0px, pad.t + ph); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // z target marker
+  const xtgt = toX(zTarget);
+  if (xtgt >= pad.l && xtgt <= pad.l + pw) {
+    const wt = w0 * Math.sqrt(1 + (zTarget / zR) ** 2);
+    const ytgt = toY(wt);
+    ctx.strokeStyle = '#ffc800';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(xtgt, pad.t); ctx.lineTo(xtgt, pad.t + ph); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffc800';
+    ctx.beginPath(); ctx.arc(xtgt, ytgt, 4, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = '#ffc800';
+    ctx.font = '11px IBM Plex Mono, monospace';
+    ctx.fillText(`w(z)=${fmtSci(wt)}m`, xtgt + 7, ytgt - 6);
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#8892a4';
+  ctx.font = '11px IBM Plex Mono, monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${fmtSci(wMax)}`, pad.l - 4, pad.t + 6);
+  ctx.fillText(`0`, pad.l - 4, pad.t + ph + 4);
+  ctx.textAlign = 'center';
+  ctx.fillText('z / z_R', pad.l + pw / 2, H - 4);
+  ctx.fillText('-4', toX(-4*zR), pad.t + ph + 14);
+  ctx.fillText('0', toX(0), pad.t + ph + 14);
+  ctx.fillText('+4', toX(4*zR), pad.t + ph + 14);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#4a9eff';
+  ctx.fillText('z=0 (focus)', x0px + 5, pad.t + 12);
+
+  // Y label
+  ctx.save();
+  ctx.translate(14, pad.t + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#8892a4';
+  ctx.textAlign = 'center';
+  ctx.fillText('w(z)  [m]', 0, 0);
+  ctx.restore();
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────
+function fmtSci(v) {
+  if (v === 0) return '0';
+  const exp = Math.floor(Math.log10(Math.abs(v)));
+  if (Math.abs(exp) < 4) return parseFloat(v.toPrecision(4)).toString();
+  return v.toExponential(3);
+}
+
+function showResult(id, html, isError) {
+  const el = document.getElementById(id);
+  el.innerHTML = html;
+  el.classList.add('visible');
+  if (isError) el.style.borderLeftColor = 'var(--danger)';
+  else el.style.borderLeftColor = 'var(--accent)';
+}
+</script>
+</body>
+</html>
