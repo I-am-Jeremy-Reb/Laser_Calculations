@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOLAUS — Laser Optics Toolkit</title>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+<script>
+//Jeremy M Rebenstock Jrebenst@umich.edu
+//Updated 4/15/2026
+// ═══════════════════════════════════════════════════════════════
+// TIFF DECODER  —  self-contained, zero external dependencies
+// ═══════════════════════════════════════════════════════════════
+function decodeTIFF(arrayBuffer) {
+  const dv=new DataView(arrayBuffer), bytes=new Uint8Array(arrayBuffer);
+  const hdr=dv.getUint16(0,false);
+  if(hdr!==0x4949&&hdr!==0x4D4D) throw new Error('Not a TIFF file (bad header)');
+  const le=(hdr===0x4949);
+  const r16=o=>dv.getUint16(o,le), r32=o=>dv.getUint32(o,le);
+  if(r16(2)!==42) throw new Error('Not a valid TIFF (magic number mismatch)');
+  const tags={};
+  let ifdOff=r32(4); const n=r16(ifdOff); ifdOff+=2;
+  for(let i=0;i<n;i++){
+    const b=ifdOff+i*12,tag=r16(b),type=r16(b+2),count=r32(b+4);
+    const rv=(t,o)=>t===3?r16(o):t===4?r32(o):t===1?bytes[o]:r32(o);
+    if(type===3&&count>1){const off=count*2<=4?b+8:r32(b+8),arr=[];for(let j=0;j<count;j++)arr.push(r16(off+j*2));tags[tag]=arr;}
+    else if(type===4&&count>1){const off=r32(b+8),arr=[];for(let j=0;j<count;j++)arr.push(r32(off+j*4));tags[tag]=arr;}
+    else tags[tag]=rv(type,b+8);
+  }
+  const width=tags[256],height=tags[257],bpsRaw=tags[258];
+  const compression=tags[259]||1,spp=tags[277]||1;
+  const stripOffs=tags[273],stripCounts=tags[279];
+  if(!width||!height) throw new Error('TIFF missing width/height tags');
+  if(compression!==1) throw new Error(`Compression ${compression} not supported. Use uncompressed TIFF.`);
+  const bps=Array.isArray(bpsRaw)?bpsRaw[0]:(bpsRaw||8);
+  if(bps!==8&&bps!==16) throw new Error(`${bps}-bit TIFF not supported`);
+  const bytesPS=bps===16?2:1,maxVal=bps===16?65535:255;
+  const rgba=new Uint8ClampedArray(width*height*4);
+  const offsets=Array.isArray(stripOffs)?stripOffs:[stripOffs];
+  const counts=stripCounts?(Array.isArray(stripCounts)?stripCounts:[stripCounts]):[width*height*spp*bytesPS];
+  const readSample=ptr=>{
+    if(bps===16){const raw=le?(bytes[ptr]|(bytes[ptr+1]<<8)):((bytes[ptr]<<8)|bytes[ptr+1]);return Math.round((raw/maxVal)*255);}
+    return bytes[ptr];
+  };
+  let px=0;
+  for(let s=0;s<offsets.length;s++){
+    let ptr=offsets[s];const sp=Math.floor(counts[s]/(bytesPS*spp));
+    for(let p=0;p<sp&&px<width*height;p++,px++){
+      let r,g,b;
+      if(spp===1){const v=readSample(ptr);ptr+=bytesPS;r=g=b=v;}
+      else if(spp>=3){r=readSample(ptr);ptr+=bytesPS;g=readSample(ptr);ptr+=bytesPS;b=readSample(ptr);ptr+=bytesPS;if(spp===4)ptr+=bytesPS;}
+      rgba[px*4]=r;rgba[px*4+1]=g;rgba[px*4+2]=b;rgba[px*4+3]=255;
+    }
+  }
+  return {rgba,width,height};
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIFF ENCODER  —  16-bit grayscale uncompressed
+// ═══════════════════════════════════════════════════════════════
+function encodeTIFF16(intensity, width, height) {
+  let iMax=0;
+  for(let i=0;i<intensity.length;i++) if(intensity[i]>iMax) iMax=intensity[i];
+  const scale=iMax>0?65535/iMax:1;
+  const imgBytes=width*height*2;
+  const ifdOffset=8, numTags=9;
+  const ifdSize=2+numTags*12+4;
+  const imgOffset=ifdOffset+ifdSize;
+  const buf=new ArrayBuffer(imgOffset+imgBytes);
+  const dv=new DataView(buf);
+  dv.setUint16(0,0x4949,true);dv.setUint16(2,42,true);dv.setUint32(4,ifdOffset,true);
+  let p=ifdOffset; dv.setUint16(p,numTags,true); p+=2;
+  const setTag=(tag,type,count,value)=>{dv.setUint16(p,tag,true);dv.setUint16(p+2,type,true);dv.setUint32(p+4,count,true);dv.setUint32(p+8,value,true);p+=12;};
+  setTag(256,4,1,width);setTag(257,4,1,height);setTag(258,3,1,16);setTag(259,3,1,1);
+  setTag(262,3,1,1);setTag(273,4,1,imgOffset);setTag(277,3,1,1);setTag(278,4,1,height);setTag(279,4,1,imgBytes);
+  dv.setUint32(p,0,true);
+  let off=imgOffset;
+  for(let i=0;i<intensity.length;i++){dv.setUint16(off,Math.min(65535,Math.round(intensity[i]*scale)),true);off+=2;}
+  return buf;
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+  :root{--bg:#0d0f14;--surface:#161920;--surface2:#1e2230;--border:#2a2f3d;--accent:#00d4a0;--accent2:#4a9eff;--text:#e2e8f0;--muted:#8892a4;--danger:#ff6b6b;--orange:#ff9500;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 28px;display:flex;align-items:center;justify-content:space-between;height:58px;gap:12px;}
+  .logo{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:500;color:var(--accent);letter-spacing:0.06em;white-space:nowrap;}
+  .logo span{color:var(--muted);font-weight:400;}
+  nav{display:flex;gap:3px;flex-wrap:wrap;}
+  nav button{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;letter-spacing:0.04em;text-transform:uppercase;padding:6px 13px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s;}
+  nav button:hover{color:var(--text);border-color:var(--border);}
+  nav button.active{color:var(--accent);border-color:var(--accent);background:rgba(0,212,160,.08);}
+  .container{max-width:980px;margin:0 auto;padding:32px 20px;}
+  .tab{display:none;}.tab.active{display:block;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:24px 28px;margin-bottom:18px;}
+  .card h2{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;color:var(--accent);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+  .card p{font-size:13px;line-height:1.7;color:var(--muted);margin-bottom:8px;}
+  .hero-title{font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:500;color:var(--text);margin-bottom:6px;}
+  .hero-title span{color:var(--accent);}
+  .hero-sub{font-size:13px;color:var(--muted);margin-bottom:20px;}
+  .feature-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin:18px 0;}
+  .feature-item{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:13px 15px;}
+  .feature-item .f-label{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--accent2);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;}
+  .feature-item .f-desc{font-size:12px;color:var(--muted);line-height:1.5;}
+  .logo-row{display:flex;align-items:center;gap:20px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border);}
+  .logo-placeholder{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:6px 11px;}
+  .dev-line{font-size:12px;color:var(--muted);}.dev-line a{color:var(--accent);text-decoration:none;}
+  .input-row{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0;align-items:flex-end;}
+  .input-group{display:flex;flex-direction:column;gap:4px;flex:1;min-width:130px;}
+  .input-group label{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;}
+  input[type="number"]{font-family:'IBM Plex Mono',monospace;font-size:13px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:7px 10px;outline:none;transition:border-color .15s;width:100%;}
+  input[type="number"]:focus{border-color:var(--accent);}
+  input[type="file"]{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);background:var(--surface2);border:1px dashed var(--border);border-radius:4px;padding:10px 13px;cursor:pointer;width:100%;transition:border-color .15s;}
+  input[type="file"]:hover{border-color:var(--accent);}
+  .btn{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;letter-spacing:0.04em;text-transform:uppercase;padding:7px 14px;border-radius:4px;cursor:pointer;transition:all .15s;white-space:nowrap;}
+  .btn-primary{background:var(--accent);color:#0d0f14;border:1px solid var(--accent);}
+  .btn-primary:hover{background:#00f0b8;}
+  .btn-secondary{background:transparent;color:var(--accent2);border:1px solid var(--accent2);}
+  .btn-secondary:hover{background:rgba(74,158,255,.1);}
+  .btn-orange{background:transparent;color:var(--orange);border:1px solid var(--orange);}
+  .btn-orange:hover{background:rgba(255,149,0,.1);}
+  .btn-group{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px;}
+  .result-box{background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:4px;padding:11px 15px;margin-top:12px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--accent);display:none;}
+  .result-box.visible{display:block;}
+  .result-box .result-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;}
+  .canvas-wrap{border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#000;display:none;}
+  .canvas-wrap.visible{display:block;}
+  .canvas-wrap canvas{display:block;width:100%;height:auto;}
+  .plot-title{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-align:center;padding:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .eq-block{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:11px 15px;margin:12px 0;text-align:center;font-size:13px;color:var(--text);}
+  #fileStatus{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-top:4px;min-height:15px;}
+  .status-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 6px;border-radius:3px;margin-left:5px;}
+  .status-ok{background:rgba(0,212,160,.15);color:var(--accent);}
+  .status-wait{background:rgba(255,200,0,.12);color:#ffc800;}
+  /* Ellipticity row */
+  .ellip-row{display:none;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center;}
+  .ellip-chip{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:7px 13px;font-family:'IBM Plex Mono',monospace;font-size:12px;}
+  .ellip-chip .el{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:2px;}
+  /* Results table */
+  #resultsTable{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+  #resultsTable th{text-align:left;padding:5px 9px;background:var(--surface2);color:var(--muted);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap;}
+  #resultsTable td{padding:5px 9px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle;}
+  #resultsTable tbody tr:last-child td{border-bottom:none;}
+  #resultsTable tbody tr:hover td{background:var(--surface2);}
+  #resultsTable td.accent{color:var(--accent);font-weight:500;}
+  #resultsTable td.warn{color:#ffc800;}
+  #resultsTable td.muted{color:var(--muted);}
+  #resultsTable td.fname{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:10px;}
+  /* Accordion */
+  .explain-block{margin-top:16px;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+  .explain-header{display:flex;align-items:center;justify-content:space-between;padding:10px 15px;background:var(--surface2);cursor:pointer;user-select:none;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;transition:color .15s;}
+  .explain-header:hover{color:var(--text);}
+  .explain-header.open .arrow{transform:rotate(180deg);}
+  .explain-body{display:none;padding:16px 20px;background:var(--surface);border-top:1px solid var(--border);}
+  .explain-body.open{display:block;}
+  .explain-body p{font-size:12px;line-height:1.75;color:var(--muted);margin-bottom:8px;}
+  .explain-body p:last-child{margin-bottom:0;}
+  .explain-body .math-line{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:8px 13px;margin:9px 0;text-align:center;font-size:13px;color:var(--text);}
+  .explain-body strong{color:var(--text);font-weight:500;}
+  /* Intensity tab */
+  .dual-plot-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:16px;}
+  .dual-plot-row>div{flex:1;min-width:300px;}
+  canvas.plot-canvas{display:block;width:100%;border:1px solid var(--border);border-radius:6px;background:var(--surface2);}
+  #gaussianCanvas{display:block;max-width:100%;margin-top:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Laser OnLine Analysis for Users of pettawatt Systems <span>// LOLAUS</span></div>
+  <nav>
+    <button class="active" onclick="showTab('home',this)">Home</button>
+    <button onclick="showTab('spot',this)">Spot Calc</button>
+    <button onclick="showTab('intensity',this)">Intensity / a₀</button>
+    <button onclick="showTab('gaussian',this)">Gaussian</button>
+  </nav>
+</header>
+
+<div class="container">
+
+<!-- ══════════════ HOME ══════════════ -->
+<div id="home" class="tab active">
+  <div class="card">
+    <div class="hero-title">Laser <span>Optics</span> Toolkit</div>
+    <div class="hero-sub">Diagnostics and beam analysis for laser plasma physics — all processing runs locally in your browser</div>
+    <div class="feature-grid">
+      <div class="feature-item"><div class="f-label">Spot Calculation</div><div class="f-desc">86.5% EE radius (1/e²), intensity centroid, beam ellipticity, Strehl ratio. Export images as 16-bit TIFF.</div></div>
+      <div class="feature-item"><div class="f-label">Intensity / a₀</div><div class="f-desc">Peak intensity and normalised vector potential a₀ vs energy and spot size, with log–log plots and vertical markers.</div></div>
+      <div class="feature-item"><div class="f-label">Gaussian Beam</div><div class="f-desc">Compute w(z) from focus given w₀ and λ. Full Rayleigh-range beam envelope plot.</div></div>
+      <div class="feature-item"><div class="f-label">Export</div><div class="f-desc">Export beam images as 16-bit TIFF and measurement log as CSV directly from the browser.</div></div>
+    </div>
+    <div class="logo-row">
+      <div class="logo-placeholder">⚡ ZEUS Facility</div>
+      <div class="logo-placeholder">◈ NSF</div>
+      <div style="flex:1"></div>
+      <div class="dev-line">Developer: <a href="https://sites.google.com/view/jeremy-rebenstock/about" target="_blank">Jeremy Rebenstock</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ SPOT CALC ══════════════ -->
+<div id="spot" class="tab">
+  <div class="card">
+    <h2>Spot Calculation — 86.5% EE Radius · Ellipticity · Strehl</h2>
+    <div class="eq-block">
+      \( E(r)=\displaystyle\int_0^r I(r')\,2\pi r'\,dr' \;\Rightarrow\; r_{86.5}: E(r_{86.5})=0.865\,E_\text{total} \)
+    </div>
+    <p>Upload a TIFF beam profile. Computes the intensity centroid, 86.5% EE radius, beam ellipticity from the second-moment tensor, and Strehl ratio.</p>
+
+    <input type="file" id="upload" accept=".tif,.tiff">
+    <div id="fileStatus">No file loaded.</div>
+
+    <div class="input-row">
+      <div class="input-group"><label>µm per pixel (optional)</label><input type="number" id="um_per_pixel" placeholder="e.g. 3.45" step="any" min="0"></div>
+      <div class="input-group"><label>Diffraction limit radius (µm, optional)</label><input type="number" id="r_dl" placeholder="e.g. 5.0" step="any" min="0"></div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-secondary" onclick="showImage()">Show Image</button>
+      <button class="btn btn-primary"   onclick="calculateEE()">Calculate 86.5% EE Radius</button>
+      <button class="btn btn-secondary" onclick="plotCircle()">Draw 86.5% Circle</button>
+      <button class="btn btn-secondary" onclick="plotDiffractionLimit()">Draw Diffraction Limit</button>
+    </div>
+
+
+    <div id="eeResult" class="result-box"></div>
+    <div id="dlResult" class="result-box" style="border-left-color:var(--orange);"></div>
+
+    <!-- Image pair -->
+    <div id="plotsRow" style="display:none;flex-wrap:wrap;gap:10px;margin-top:16px;">
+      <div style="flex:1;min-width:270px;">
+        <div class="plot-title" id="titleLinear"></div>
+        <div class="canvas-wrap visible" style="margin-top:4px;"><canvas id="spotCanvas"></canvas></div>
+      </div>
+      <div style="flex:1;min-width:270px;">
+        <div class="plot-title" id="titleLog"></div>
+        <div class="canvas-wrap visible" style="margin-top:4px;"><canvas id="spotCanvasLog"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Measurement Log -->
+    <div id="resultsTableWrap" style="margin-top:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;">Measurement Log</span>
+        <div style="display:flex;gap:7px;">
+          <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportCSV()">Export CSV</button>
+          <button class="btn btn-secondary" style="padding:4px 10px;font-size:10px;" onclick="clearTable()">Clear</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table id="resultsTable">
+          <thead>
+            <tr><th>File</th><th>Centroid (px)</th><th>µm/px</th><th>r₈₆.₅ (px)</th><th>r₈₆.₅ (µm)</th><th>Ellipticity ε</th><th>Angle °</th><th>DL (µm)</th><th>Strehl</th></tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr id="emptyRow"><td colspan="9" style="text-align:center;color:var(--muted);font-style:italic;padding:14px 9px;font-size:11px;">No measurements yet — load a TIFF and click <strong style="color:var(--text);">Calculate 86.5% EE Radius</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Ellipticity chips -->
+    <div id="ellipRow" class="ellip-row">
+      <div class="ellip-chip"><span class="el">Ellipticity ε</span><span id="ellipValue">—</span></div>
+      <div class="ellip-chip"><span class="el">Semi-axes (px)</span><span id="ellipAxes">—</span></div>
+      <div class="ellip-chip"><span class="el">Major-axis angle</span><span id="ellipAngle">—</span></div>
+      <div class="ellip-chip" id="ellipNote" style="border-color:var(--muted);"></div>
+    </div>
+
+    
+    <!-- Accordions -->
+    <div class="explain-block">
+      <div class="explain-header" onclick="toggleExplain('centroidExp',this)">▸ How the centroid is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
+      <div class="explain-body" id="centroidExp">
+        <p>The <strong>intensity-weighted centroid</strong> locates the beam's centre of mass:</p>
+        <div class="math-line">\(\bar{x}=\dfrac{\sum x\,I(x,y)}{\sum I},\qquad\bar{y}=\dfrac{\sum y\,I(x,y)}{\sum I}\)</div>
+        <p>Only pixels above 10% of the peak contribute, preventing read-out noise from biasing the result. The camera noise floor (histogram peak in the low-level range) is subtracted beforehand, and saturated pixels are replaced by the 5×5 neighbourhood median. The centroid is sub-pixel accurate.</p>
+      </div>
+    </div>
+    <div class="explain-block">
+      <div class="explain-header" onclick="toggleExplain('ellipExp',this)">▸ How ellipticity is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
+      <div class="explain-body" id="ellipExp">
+        <p>Ellipticity uses the <strong>second-moment (variance–covariance) tensor</strong> of the intensity:</p>
+        <div class="math-line">\(\sigma_{xx}=\dfrac{\sum(x-\bar x)^2 I}{\sum I},\quad\sigma_{yy}=\dfrac{\sum(y-\bar y)^2 I}{\sum I},\quad\sigma_{xy}=\dfrac{\sum(x-\bar x)(y-\bar y)I}{\sum I}\)</div>
+        <p>The eigenvalues \(\lambda_{1,2}\) of \(\bigl(\begin{smallmatrix}\sigma_{xx}&\sigma_{xy}\\\sigma_{xy}&\sigma_{yy}\end{smallmatrix}\bigr)\) give the principal-axis variances. The 1/e² semi-axes are \(w_{1,2}=2\sqrt{\lambda_{1,2}}\) and \(\varepsilon = w_\text{min}/w_\text{max}\in[0,1]\). A perfect circular beam gives ε = 1. Values ≥ 0.87 are generally acceptable; below 0.70 indicates significant astigmatism. The orientation angle θ of the major axis (degrees from horizontal) is computed from the dominant eigenvector.</p>
+        <p>The yellow dashed ellipse overlaid on the image represents the 1/e² principal-axis ellipse derived from the second moments.</p>
+      </div>
+    </div>
+    <div class="explain-block">
+      <div class="explain-header" onclick="toggleExplain('strehlExp',this)">▸ How the Strehl ratio is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
+      <div class="explain-body" id="strehlExp">
+        <p>The <strong>Strehl ratio</strong> S compares a real beam to the diffraction-limited ideal. S = 1 is the maximum; S ≥ 0.8 is the Maréchal criterion.</p>
+        <div class="math-line">\(S\approx\!\left(\dfrac{r_\text{DL}}{r_{86.5}}\right)^{\!2}\)</div>
+        <p>r<sub>DL</sub> is the theoretical diffraction-limited 86.5% EE radius you supply; r₈₆.₅ is the measured radius. For a fixed total energy, peak intensity scales as 1/r², so the ratio of peak intensities equals the inverse square of the radii. This approximation is most accurate for nearly-Gaussian beams with mild aberrations (S ≳ 0.3).</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ INTENSITY / a0 ══════════════ -->
+<div id="intensity" class="tab">
+  <div class="card">
+    <h2>Peak Intensity &amp; Normalised Vector Potential a₀</h2>
+    <div class="eq-block">
+      \( I_0 = \dfrac{2\ln2}{\pi}\cdot\dfrac{E}{\tau\,\pi\,r_{86.5}^2} \qquad a_0 = \sqrt{\dfrac{I_0\,\lambda_{\mu\text{m}}^2}{1.37\times10^{18}}} \)
+    </div>
+    <p>
+      Peak intensity \(I_0\) [W/cm²] for a spatially and temporally Gaussian pulse of energy \(E\) [J], FWHM duration τ [fs], and 1/e² radius \(r_{86.5}\) [µm].
+      The factor \(2\ln 2/\pi\approx0.441\) arises from integrating a Gaussian in time; dividing by \(\pi r^2\) gives the peak of the spatial Gaussian.
+      \(a_0\) uses λ in µm; the constant 1.37×10¹⁸ W/cm²/µm² is the relativistic intensity threshold for λ = 1 µm.
+    </p>
+    <div class="input-row">
+      <div class="input-group"><label>Pulse duration τ (fs) *</label><input type="number" id="i_tau" placeholder="e.g. 30" step="any" min="0"></div>
+      <div class="input-group"><label>Wavelength λ (µm)</label><input type="number" id="i_lambda" placeholder="e.g. 0.8" step="any" min="0" value="0.8"></div>
+      <div class="input-group"><label>Energy E (J) — optional</label><input type="number" id="i_energy" placeholder="e.g. 20" step="any" min="0"></div>
+      <div class="input-group"><label>r₈₆.₅ (µm) — optional</label><input type="number" id="i_radius" placeholder="e.g. 8.0" step="any" min="0"></div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="calcIntensityPlots()">Calculate &amp; Plot</button>
+    </div>
+    <div id="intensityResult" class="result-box"></div>
+
+    <div class="dual-plot-row">
+      <!-- Plot: I vs Energy -->
+      <div>
+        <div class="plot-title" id="titleIvsE">I &amp; a₀ vs Energy — requires τ and r₈₆.₅</div>
+        <canvas id="canvasIvsE" class="plot-canvas" height="300" style="display:none;"></canvas>
+        <div style="margin-top:5px;display:flex;gap:7px;justify-content:flex-end;">
+          <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportPlotTIFF('canvasIvsE','intensity_vs_energy')">Export TIFF</button>
+        </div>
+      </div>
+      <!-- Plot: I vs Radius -->
+      <div>
+        <div class="plot-title" id="titleIvsR">I &amp; a₀ vs Radius — requires τ and E</div>
+        <canvas id="canvasIvsR" class="plot-canvas" height="300" style="display:none;"></canvas>
+        <div style="margin-top:5px;display:flex;gap:7px;justify-content:flex-end;">
+          <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportPlotTIFF('canvasIvsR','intensity_vs_radius')">Export TIFF</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ GAUSSIAN ══════════════ -->
+<div id="gaussian" class="tab">
+  <div class="card">
+    <h2>Gaussian Beam Propagation</h2>
+    <div class="eq-block">
+      \( w(z)=w_0\sqrt{1+\!\left(\dfrac{z}{z_R}\right)^{\!2}},\qquad z_R=\dfrac{\pi w_0^2}{\lambda} \)
+    </div>
+    <p>Enter w₀ and λ to compute w(z) at distance z from focus.</p>
+    <div class="input-row">
+      <div class="input-group"><label>Beam waist w₀ (m)</label><input type="number" id="w0_g" placeholder="e.g. 50e-6" step="any"></div>
+      <div class="input-group"><label>Wavelength λ (m)</label><input type="number" id="lambda_g" placeholder="e.g. 800e-9" step="any"></div>
+      <div class="input-group"><label>Distance z (m)</label><input type="number" id="z_g" placeholder="e.g. 0.05" step="any"></div>
+    </div>
+    <div class="btn-group"><button class="btn btn-primary" onclick="calcGaussian()">Calculate &amp; Plot</button></div>
+    <div id="gaussianResult" class="result-box"></div>
+    <canvas id="gaussianCanvas" style="display:none;"></canvas>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<script>
+// ════════ TAB / ACCORDION ════════
+function showTab(id,btn){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if(btn) btn.classList.add('active');
+  if(window.MathJax) MathJax.typesetPromise();
+}
+function toggleExplain(bodyId,header){
+  const body=document.getElementById(bodyId);
+  const open=body.classList.contains('open');
+  body.classList.toggle('open',!open); header.classList.toggle('open',!open);
+  if(!open&&window.MathJax) MathJax.typesetPromise([body]);
+}
+
+// ════════ STATE ════════
+let rawData=null,imgWidth=0,imgHeight=0;
+let cx=0,cy=0,r865=0;
+let currentFileName='';
+let intensityData=null;
+let ellipEps=null,ellipW1=null,ellipW2=null,ellipTheta=null;
+let tableRows=[];
+
+// ════════ TIFF LOAD ════════
+document.getElementById('upload').addEventListener('change',function(e){
+  const file=e.target.files[0]; if(!file) return;
+  currentFileName=file.name.replace(/\.[^.]+$/,'');
+  const statusEl=document.getElementById('fileStatus');
+  statusEl.innerHTML='Loading <span class="status-badge status-wait">reading…</span>';
+  const reader=new FileReader();
+  reader.onload=function(ev){
+    try{
+      const res=decodeTIFF(ev.target.result);
+      rawData=res.rgba;imgWidth=res.width;imgHeight=res.height;
+      intensityData=null;r865=0;cx=0;cy=0;ellipEps=null;
+      document.getElementById('plotsRow').style.display='none';
+      document.getElementById('ellipRow').style.display='none';
+      statusEl.innerHTML=`${file.name} &nbsp;<span class="status-badge status-ok">${imgWidth}×${imgHeight} px</span>`;
+    }catch(err){
+      statusEl.innerHTML=`<span style="color:var(--danger)">Error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+// ════════ BUILD INTENSITY ════════
+function buildIntensity(){
+  const N=imgWidth*imgHeight;
+  const raw=new Float64Array(N);
+  const hist=new Uint32Array(256); let dataMax=0;
+  for(let i=0;i<N;i++){const v=rawData[i*4];raw[i]=v;hist[v]++;if(v>dataMax)dataMax=v;}
+  const fsMax=Math.max(2,Math.ceil(dataMax*0.15));
+  let noisePeak=0,noisePeakCount=0;
+  for(let v=1;v<=fsMax;v++) if(hist[v]>noisePeakCount){noisePeakCount=hist[v];noisePeak=v;}
+  const noiseFloor=(noisePeakCount>N*0.01)?noisePeak:0;
+  const burnThresh=Math.max(254,dataMax*0.99); let burntCount=0;
+  const cleaned=new Float64Array(N);
+  for(let i=0;i<N;i++){const v=raw[i];if(v>=burnThresh){burntCount++;cleaned[i]=-1;}else cleaned[i]=Math.max(0,v-noiseFloor);}
+  for(let y=0;y<imgHeight;y++){for(let x=0;x<imgWidth;x++){
+    const idx=y*imgWidth+x; if(cleaned[idx]!==-1) continue;
+    const nb=[];
+    for(let dy=-2;dy<=2;dy++){for(let dx=-2;dx<=2;dx++){const ny=y+dy,nx=x+dx;if(ny>=0&&ny<imgHeight&&nx>=0&&nx<imgWidth){const nv=cleaned[ny*imgWidth+nx];if(nv>=0)nb.push(nv);}}}
+    nb.sort((a,b)=>a-b); cleaned[idx]=nb.length>0?nb[Math.floor(nb.length/2)]:0;
+  }}
+  return {intensity:cleaned,burntCount,noiseFloor,dataMax};
+}
+
+// ════════ ELLIPTICITY ════════
+function computeEllipticity(intensity){
+  const N=imgWidth*imgHeight; let Imax=0;
+  for(let i=0;i<N;i++) if(intensity[i]>Imax) Imax=intensity[i];
+  const thresh=0.10*Imax;
+  let sxx=0,syy=0,sxy=0,W=0;
+  for(let y=0;y<imgHeight;y++){for(let x=0;x<imgWidth;x++){
+    const I=intensity[y*imgWidth+x]; if(I<thresh) continue;
+    const dx=x-cx,dy=y-cy;
+    sxx+=dx*dx*I; syy+=dy*dy*I; sxy+=dx*dy*I; W+=I;
+  }}
+  if(W===0) return null;
+  sxx/=W; syy/=W; sxy/=W;
+  const trace=sxx+syy, det=sxx*syy-sxy*sxy;
+  const disc=Math.sqrt(Math.max(0,(trace/2)**2-det));
+  const lam1=trace/2+disc, lam2=trace/2-disc;
+  const w1=2*Math.sqrt(Math.max(0,lam1)), w2=2*Math.sqrt(Math.max(0,lam2));
+  const wMaj=Math.max(w1,w2), wMin=Math.min(w1,w2);
+  const eps=wMaj>0?wMin/wMaj:1;
+  let theta=Math.abs(sxy)<1e-12?(sxx>=syy?0:90):Math.atan2(lam1-sxx,sxy)*180/Math.PI;
+  ellipEps=eps; ellipW1=wMaj; ellipW2=wMin; ellipTheta=theta;
+
+  const row=document.getElementById('ellipRow'); row.style.display='flex';
+  const cls=eps>=0.87?'color:var(--accent)':eps>=0.70?'color:#ffc800':'color:var(--danger)';
+  document.getElementById('ellipValue').innerHTML=`<span style="${cls}">${eps.toFixed(3)}</span>`;
+  document.getElementById('ellipAxes').textContent=`${wMaj.toFixed(1)} / ${wMin.toFixed(1)} px`;
+  document.getElementById('ellipAngle').textContent=`${theta.toFixed(1)}°`;
+  const note=eps>=0.87?'✓ Near-circular':eps>=0.70?'⚠ Mild astigmatism':'✕ Significant astigmatism';
+  document.getElementById('ellipNote').textContent=note;
+  document.getElementById('ellipNote').style.color=eps>=0.87?'var(--accent)':eps>=0.70?'#ffc800':'var(--danger)';
+  return {eps,wMaj,wMin,theta};
+}
+
+// ════════ RENDER ════════
+function renderLinear(canvas,intensity){
+  canvas.width=imgWidth; canvas.height=imgHeight;
+  const ctx=canvas.getContext('2d'),imgData=ctx.createImageData(imgWidth,imgHeight);
+  const N=imgWidth*imgHeight; let iMax=0;
+  for(let i=0;i<N;i++) if(intensity[i]>iMax) iMax=intensity[i];
+  const sc=iMax>0?255/iMax:1;
+  for(let i=0;i<N;i++){const v=Math.round(intensity[i]*sc);imgData.data[i*4]=v;imgData.data[i*4+1]=v;imgData.data[i*4+2]=v;imgData.data[i*4+3]=255;}
+  ctx.putImageData(imgData,0,0);
+}
+function renderLog(canvas,intensity){
+  canvas.width=imgWidth; canvas.height=imgHeight;
+  const ctx=canvas.getContext('2d'),imgData=ctx.createImageData(imgWidth,imgHeight);
+  const N=imgWidth*imgHeight; let iMax=0;
+  for(let i=0;i<N;i++) if(intensity[i]>iMax) iMax=intensity[i];
+  const logMax=Math.log10(iMax+1);
+  for(let i=0;i<N;i++){
+    const t=logMax>0?Math.log10(intensity[i]+1)/logMax:0;
+    let r,g,b;
+    if(t<1/3){r=Math.round(t*3*255);g=0;b=0;}
+    else if(t<2/3){r=255;g=Math.round((t-1/3)*3*255);b=0;}
+    else{r=255;g=255;b=Math.round((t-2/3)*3*255);}
+    imgData.data[i*4]=r;imgData.data[i*4+1]=g;imgData.data[i*4+2]=b;imgData.data[i*4+3]=255;
+  }
+  ctx.putImageData(imgData,0,0);
+}
+function drawOverlays(canvas){
+  const ctx=canvas.getContext('2d');
+  const lw=Math.max(1,imgWidth/600);
+  // 86.5% circle
+  ctx.beginPath();ctx.arc(cx,cy,r865,0,2*Math.PI);
+  ctx.strokeStyle='#00d4a0';ctx.lineWidth=lw*1.5;ctx.stroke();
+  // centroid dot
+  ctx.beginPath();ctx.arc(cx,cy,Math.max(2,imgWidth/400),0,2*Math.PI);
+  ctx.fillStyle='#4a9eff';ctx.fill();
+  // ellipse overlay - REMOVED
+}
+function showBothPlots(withOverlay){
+  const cL=document.getElementById('spotCanvas'),cLg=document.getElementById('spotCanvasLog');
+  renderLinear(cL,intensityData); renderLog(cLg,intensityData);
+  if(withOverlay&&r865>0){drawOverlays(cL);drawOverlays(cLg);}
+  document.getElementById('titleLinear').textContent=currentFileName+' — linear';
+  document.getElementById('titleLog').textContent=currentFileName+' — log (hot)';
+  document.getElementById('plotsRow').style.display='flex';
+}
+
+// ════════ SHOW IMAGE ════════
+function showImage(){
+  if(!rawData){alert('Please upload a TIFF file first.');return;}
+  if(!intensityData){const res=buildIntensity();intensityData=res.intensity;}
+  showBothPlots(r865>0);
+}
+
+// ════════ CALCULATE EE ════════
+function calculateEE(){
+  if(!rawData){alert('Please upload a TIFF file first.');return;}
+  const {intensity,burntCount,noiseFloor}=buildIntensity();
+  intensityData=intensity;
+  const N=imgWidth*imgHeight; let total=0;
+  for(let i=0;i<N;i++) total+=intensity[i];
+  if(total===0){showResult('eeResult','Error: image appears to be all black.',true);return;}
+
+  let Imax=0; for(let i=0;i<N;i++) if(intensity[i]>Imax) Imax=intensity[i];
+  const thresh=0.10*Imax;
+  let xS=0,yS=0,wS=0;
+  for(let y=0;y<imgHeight;y++){for(let x=0;x<imgWidth;x++){
+    const I=intensity[y*imgWidth+x]; if(I<thresh) continue;
+    xS+=x*I; yS+=y*I; wS+=I;
+  }}
+  if(wS===0){for(let y=0;y<imgHeight;y++){for(let x=0;x<imgWidth;x++){const I=intensity[y*imgWidth+x];xS+=x*I;yS+=y*I;wS+=I;}}}
+  cx=xS/wS; cy=yS/wS;
+
+  const radial=new Array(N);
+  for(let y=0;y<imgHeight;y++){for(let x=0;x<imgWidth;x++){const idx=y*imgWidth+x;radial[idx]={r:Math.sqrt((x-cx)**2+(y-cy)**2),I:intensity[idx]};}}
+  radial.sort((a,b)=>a.r-b.r);
+  const target=0.865*total; let cum=0; r865=0;
+  for(let i=0;i<radial.length;i++){cum+=radial[i].I;if(cum>=target){r865=radial[i].r;break;}}
+
+  const ellip=computeEllipticity(intensity);
+  const um=parseFloat(document.getElementById('um_per_pixel').value);
+  const rdl=parseFloat(document.getElementById('r_dl').value);
+  let r865_um=null,strehlVal=null;
+  if(!isNaN(um)&&um>0){r865_um=r865*um;if(!isNaN(rdl)&&rdl>0) strehlVal=(rdl/r865_um)**2;}
+
+  let html=`<div class="result-label">86.5% Encircled Energy Radius (1/e² equivalent)</div>`;
+  html+=`r₈₆.₅ = ${r865.toFixed(2)} px`;
+  if(r865_um!==null) html+=`&nbsp;|&nbsp;${r865_um.toFixed(2)} µm`;
+  if(strehlVal!==null) html+=`&nbsp;|&nbsp;Strehl ≈ ${strehlVal.toFixed(3)}`;
+  html+=`<br><span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">centroid: (${cx.toFixed(1)}, ${cy.toFixed(1)}) px`;
+  if(!isNaN(um)&&um>0) html+=`&nbsp;|&nbsp;scale: ${um} µm/px`;
+  if(noiseFloor>0) html+=`&nbsp;|&nbsp;noise floor ${noiseFloor} subtracted`;
+  if(burntCount>0) html+=`&nbsp;|&nbsp;<span style="color:#ffc800">${burntCount} burnt px corrected</span>`;
+  html+=`</span>`;
+  showResult('eeResult',html);
+
+  addTableRow(currentFileName,cx,cy,(!isNaN(um)&&um>0)?um:null,r865,r865_um,
+    ellip?ellip.eps:null,ellip?ellip.theta:null,
+    (!isNaN(rdl)&&rdl>0&&r865_um!==null)?rdl:null,strehlVal);
+  showBothPlots(false);
+}
+
+// ════════ OVERLAYS ════════
+function plotCircle(){
+  if(r865===0){alert('Run Calculate 86.5% EE Radius first.');return;}
+  showBothPlots(true);
+}
+function plotDiffractionLimit(){
+  const um=parseFloat(document.getElementById('um_per_pixel').value);
+  const rdl=parseFloat(document.getElementById('r_dl').value);
+  if(isNaN(um)||um<=0||isNaN(rdl)||rdl<=0){alert('Please enter both µm/pixel and DL radius (µm).');return;}
+  if(!intensityData){alert('Please run Calculate 86.5% EE Radius first.');return;}
+  const rdl_px=rdl/um,r865_um=r865*um,strehl=(rdl/r865_um)**2;
+  let shtml=`<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
+  shtml+=`DL = ${rdl.toFixed(2)} µm (${rdl_px.toFixed(1)} px)&nbsp;|&nbsp;r₈₆.₅ = ${r865_um.toFixed(2)} µm&nbsp;|&nbsp;<strong>Strehl ≈ ${strehl.toFixed(3)}</strong>`;
+  if(strehl>1) shtml+=` <span style="color:#ffc800">(> 1: tighter than DL estimate)</span>`;
+  showResult('dlResult',shtml);
+  showBothPlots(r865>0);
+  [document.getElementById('spotCanvas'),document.getElementById('spotCanvasLog')].forEach(canvas=>{
+    const ctx=canvas.getContext('2d'),lw=Math.max(1,imgWidth/600);
+    ctx.beginPath();ctx.arc(cx,cy,rdl_px,0,2*Math.PI);
+    ctx.strokeStyle='#ff9500';ctx.lineWidth=lw*1.5;ctx.setLineDash([Math.max(3,lw*4),Math.max(3,lw*3)]);ctx.stroke();ctx.setLineDash([]);
+    const fs=Math.max(11,Math.round(imgWidth/120));
+    ctx.fillStyle='#ff9500';ctx.font=`${fs}px IBM Plex Mono,monospace`;
+    ctx.fillText(`DL ${rdl.toFixed(1)}µm`,cx+rdl_px+4,cy-fs);
+    ctx.fillText(`S ${strehl.toFixed(3)}`,cx+rdl_px+4,cy+fs*0.2);
+  });
+}
+
+// ════════ TIFF EXPORT (beam images) ════════
+function exportBeamTIFF(mode){
+  if(!intensityData){alert('Please run Calculate 86.5% EE Radius or Show Image first.');return;}
+  const N=imgWidth*imgHeight; let src;
+  if(mode==='log'){
+    let iMax=0; for(let i=0;i<N;i++) if(intensityData[i]>iMax) iMax=intensityData[i];
+    const logMax=Math.log10(iMax+1);
+    src=new Float64Array(N);
+    for(let i=0;i<N;i++) src[i]=logMax>0?Math.log10(intensityData[i]+1)/logMax:0;
+  } else { src=intensityData; }
+  const buf=encodeTIFF16(src,imgWidth,imgHeight);
+  const blob=new Blob([buf],{type:'image/tiff'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`${currentFileName||'beam'}_${mode}.tiff`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// Export any canvas as 16-bit TIFF (luma)
+function exportPlotTIFF(canvasId,name){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas||canvas.style.display==='none'){alert('Plot not yet generated.');return;}
+  const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
+  const imgData=ctx.getImageData(0,0,W,H);
+  const gray=new Float64Array(W*H);
+  for(let i=0;i<W*H;i++) gray[i]=0.299*imgData.data[i*4]+0.587*imgData.data[i*4+1]+0.114*imgData.data[i*4+2];
+  const buf=encodeTIFF16(gray,W,H);
+  const blob=new Blob([buf],{type:'image/tiff'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=`${name}.tiff`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ════════ CSV EXPORT ════════
+function addTableRow(fname,centX,centY,umPerPx,r865px,r865um,eps,theta,dlUm,strehl){
+  const emptyRow=document.getElementById('emptyRow'); if(emptyRow) emptyRow.remove();
+  tableRows.push({fname,centX,centY,umPerPx,r865px,r865um,eps,theta,dlUm,strehl});
+  const tbody=document.getElementById('resultsBody');
+  const tr=document.createElement('tr');
+  let epsHTML='<span style="color:var(--muted)">—</span>';
+  if(eps!==null){
+    const c=eps>=0.87?'var(--accent)':eps>=0.70?'#ffc800':'var(--danger)';
+    epsHTML=`<span style="color:${c}">${eps.toFixed(3)}</span>`;
+  }
+  let strehlStr='—',strehlClass='';
+  if(strehl!==null){strehlStr=strehl.toFixed(3);strehlClass=strehl>=0.8?'accent':strehl>=0.5?'':'warn';}
+  tr.innerHTML=`
+    <td class="fname" title="${fname}">${fname}</td>
+    <td class="muted">(${centX.toFixed(1)},${centY.toFixed(1)})</td>
+    <td class="muted">${umPerPx!==null?umPerPx.toFixed(3):'—'}</td>
+    <td class="accent">${r865px.toFixed(2)}</td>
+    <td>${r865um!==null?r865um.toFixed(2):'—'}</td>
+    <td>${epsHTML}</td>
+    <td class="muted">${theta!==null?theta.toFixed(1)+'°':'—'}</td>
+    <td class="muted">${dlUm!==null?dlUm.toFixed(2):'—'}</td>
+    <td class="${strehlClass}">${strehlStr}</td>`;
+  tbody.appendChild(tr);
+}
+function clearTable(){
+  tableRows=[];
+  document.getElementById('resultsBody').innerHTML=`<tr id="emptyRow"><td colspan="9" style="text-align:center;color:var(--muted);font-style:italic;padding:14px 9px;font-size:11px;">No measurements yet — load a TIFF and click <strong style="color:var(--text);">Calculate 86.5% EE Radius</strong></td></tr>`;
+}
+function exportCSV(){
+  if(tableRows.length===0){alert('No measurements to export yet.');return;}
+  const hdr=['File','Centroid_X_px','Centroid_Y_px','um_per_px','r865_px','r865_um','Ellipticity','Angle_deg','DL_um','Strehl'];
+  const lines=[hdr.join(',')];
+  tableRows.forEach(r=>{
+    lines.push([
+      `"${r.fname}"`,
+      r.centX.toFixed(2),r.centY.toFixed(2),
+      r.umPerPx!==null?r.umPerPx.toFixed(4):'',
+      r.r865px.toFixed(3),
+      r.r865um!==null?r.r865um.toFixed(3):'',
+      r.eps!==null?r.eps.toFixed(4):'',
+      r.theta!==null?r.theta.toFixed(2):'',
+      r.dlUm!==null?r.dlUm.toFixed(3):'',
+      r.strehl!==null?r.strehl.toFixed(4):''
+    ].join(','));
+  });
+  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='lolaus_measurement_log.csv';
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ════════ INTENSITY / a0 ════════
+const LN2=Math.log(2);
+const I0_FACTOR=(2*LN2)/Math.PI; // ≈ 0.4413
+
+function peakI(E_J,tau_s,r_cm){ return I0_FACTOR*E_J/(tau_s*Math.PI*r_cm*r_cm); }
+function a0fromI(I,lam_um){ return Math.sqrt(I*lam_um*lam_um/1.37e18); }
+
+function calcIntensityPlots(){
+  const tau_fs=parseFloat(document.getElementById('i_tau').value);
+  const lam_um=parseFloat(document.getElementById('i_lambda').value)||0.8;
+  const E_in=parseFloat(document.getElementById('i_energy').value);
+  const r_in=parseFloat(document.getElementById('i_radius').value);
+
+  if(isNaN(tau_fs)||tau_fs<=0){showResult('intensityResult','Please enter a valid pulse duration τ (fs).',true);return;}
+  const tau_s=tau_fs*1e-15;
+
+  let plotted=false;
+
+  // Plot 1: vs Energy  (need r)
+  if(isNaN(r_in)||r_in<=0){
+    document.getElementById('titleIvsE').textContent='⚠  Enter r₈₆.₅ (µm) to generate this plot';
+    document.getElementById('canvasIvsE').style.display='none';
+  } else {
+    const r_cm=r_in*1e-4;
+    drawIvsE(tau_s,r_cm,lam_um,isNaN(E_in)?null:E_in);
+    plotted=true;
+  }
+
+  // Plot 2: vs Radius  (need E)
+  if(isNaN(E_in)||E_in<=0){
+    document.getElementById('titleIvsR').textContent='⚠  Enter Energy (J) to generate this plot';
+    document.getElementById('canvasIvsR').style.display='none';
+  } else {
+    drawIvsR(tau_s,E_in,lam_um,isNaN(r_in)?null:r_in);
+    plotted=true;
+  }
+
+  // Summary
+  if(!isNaN(r_in)&&r_in>0&&!isNaN(E_in)&&E_in>0){
+    const I=peakI(E_in,tau_s,r_in*1e-4);
+    const a=a0fromI(I,lam_um);
+    let html=`<div class="result-label">Peak values at given inputs</div>`;
+    html+=`E=${E_in} J &nbsp;|&nbsp; r₈₆.₅=${r_in} µm &nbsp;|&nbsp; τ=${tau_fs} fs &nbsp;|&nbsp; λ=${lam_um} µm<br>`;
+    html+=`<span style="color:var(--accent)">I₀ = ${fmtSci(I)} W/cm²</span> &nbsp;&nbsp; <span style="color:var(--accent2)">a₀ = ${a.toFixed(3)}</span>`;
+    showResult('intensityResult',html);
+  }
+}
+
+function drawIvsE(tau_s,r_cm,lam_um,E_marker){
+  const canvas=document.getElementById('canvasIvsE');
+  canvas.style.display='block';
+  const W=canvas.offsetWidth||520,H=300;
+  canvas.width=W;canvas.height=H;
+  const EMin=0.1,EMax=1000,nPts=600;
+  const xs=[],Is=[],A0s=[];
+  for(let i=0;i<=nPts;i++){const e=EMin*Math.pow(EMax/EMin,i/nPts);const I=peakI(e,tau_s,r_cm);xs.push(e);Is.push(I);A0s.push(a0fromI(I,lam_um));}
+  drawDualLogPlot(canvas,xs,Is,A0s,'Energy (J)','Intensity (W/cm²)','a₀',EMin,EMax,E_marker,'J');
+  document.getElementById('titleIvsE').textContent=`I & a₀ vs Energy  (τ=${(tau_s*1e15).toFixed(0)} fs, r=${(r_cm*1e4).toFixed(1)} µm)`;
+}
+
+function drawIvsR(tau_s,E_J,lam_um,r_marker_um){
+  const canvas=document.getElementById('canvasIvsR');
+  canvas.style.display='block';
+  const W=canvas.offsetWidth||520,H=300;
+  canvas.width=W;canvas.height=H;
+  const rMin=1,rMax=1000,nPts=600;
+  const xs=[],Is=[],A0s=[];
+  for(let i=0;i<=nPts;i++){const r_um=rMin*Math.pow(rMax/rMin,i/nPts);const r_cm=r_um*1e-4;const I=peakI(E_J,tau_s,r_cm);xs.push(r_um);Is.push(I);A0s.push(a0fromI(I,lam_um));}
+  drawDualLogPlot(canvas,xs,Is,A0s,'r₈₆.₅ (µm)','Intensity (W/cm²)','a₀',rMin,rMax,r_marker_um,'µm');
+  document.getElementById('titleIvsR').textContent=`I & a₀ vs Radius  (τ=${(tau_s*1e15).toFixed(0)} fs, E=${E_J} J)`;
+}
+
+function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marker,markerUnit){
+  const W=canvas.width,H=canvas.height,ctx=canvas.getContext('2d');
+  const pad={t:22,b:44,l:88,r:88};
+  const pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  ctx.fillStyle='#1e2230';ctx.fillRect(0,0,W,H);
+
+  const logXmin=Math.log10(xMin),logXmax=Math.log10(xMax);
+  const logImin=Math.floor(Math.log10(Math.min(...Is))),logImax=Math.ceil(Math.log10(Math.max(...Is)));
+  const logA0min=Math.floor(Math.log10(Math.min(...A0s))),logA0max=Math.ceil(Math.log10(Math.max(...A0s)));
+
+  const toX=v=>pad.l+(Math.log10(v)-logXmin)/(logXmax-logXmin)*pw;
+  const toYI=v=>pad.t+ph-(Math.log10(Math.max(v,1e-300))-logImin)/(logImax-logImin)*ph;
+  const toYA=v=>pad.t+ph-(Math.log10(Math.max(v,1e-300))-logA0min)/(logA0max-logA0min)*ph;
+
+  // Vertical gridlines + minor
+  for(let e=Math.ceil(logXmin);e<=Math.floor(logXmax);e++){
+    const x=toX(Math.pow(10,e));
+    ctx.strokeStyle='#2a2f3d';ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke();
+    ctx.fillStyle='#8892a4';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='center';
+    ctx.fillText(fmtSci(Math.pow(10,e)),x,pad.t+ph+13);
+    for(let m=2;m<=9;m++){
+      const xm=toX(Math.pow(10,e-1)*m);
+      if(xm>=pad.l&&xm<=pad.l+pw){ctx.strokeStyle='rgba(42,47,61,.5)';ctx.lineWidth=0.3;ctx.beginPath();ctx.moveTo(xm,pad.t);ctx.lineTo(xm,pad.t+ph);ctx.stroke();}
+    }
+  }
+  // Horizontal gridlines (I axis)
+  for(let e=logImin;e<=logImax;e++){
+    const y=toYI(Math.pow(10,e));
+    if(y<pad.t||y>pad.t+ph) continue;
+    ctx.strokeStyle='#2a2f3d';ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();
+  }
+  ctx.strokeStyle='#3a4050';ctx.lineWidth=1;ctx.strokeRect(pad.l,pad.t,pw,ph);
+
+  // Left axis labels (I)
+  ctx.fillStyle='#00d4a0';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='right';
+  for(let e=logImin;e<=logImax;e++){
+    const y=toYI(Math.pow(10,e));if(y<pad.t||y>pad.t+ph) continue;
+    ctx.fillText(`10^${e}`,pad.l-5,y+3);
+  }
+  // Right axis labels (a0)
+  ctx.fillStyle='#4a9eff';ctx.textAlign='left';
+  for(let e=logA0min;e<=logA0max;e++){
+    const v=Math.pow(10,e),y=toYA(v);
+    if(y>=pad.t&&y<=pad.t+ph) ctx.fillText(fmtSci(v),pad.l+pw+5,y+3);
+  }
+
+  // Intensity curve
+  ctx.strokeStyle='#00d4a0';ctx.lineWidth=2;ctx.beginPath();let st=false;
+  for(let i=0;i<xs.length;i++){if(Is[i]<=0) continue;const x=toX(xs[i]),y=toYI(Is[i]);if(y<pad.t-10||y>pad.t+ph+10){st=false;continue;}st?ctx.lineTo(x,y):ctx.moveTo(x,y);st=true;}
+  ctx.stroke();
+  // a0 curve
+  ctx.strokeStyle='#4a9eff';ctx.lineWidth=2;ctx.beginPath();st=false;
+  for(let i=0;i<xs.length;i++){if(A0s[i]<=0) continue;const x=toX(xs[i]),y=toYA(A0s[i]);if(y<pad.t-10||y>pad.t+ph+10){st=false;continue;}st?ctx.lineTo(x,y):ctx.moveTo(x,y);st=true;}
+  ctx.stroke();
+
+  // Vertical marker
+  if(marker!==null&&marker>0&&marker>=xMin&&marker<=xMax){
+    const xm=toX(marker);
+    ctx.strokeStyle='#ffc800';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
+    ctx.beginPath();ctx.moveTo(xm,pad.t);ctx.lineTo(xm,pad.t+ph);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#ffc800';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='center';
+    ctx.fillText(`${fmtSci(marker)} ${markerUnit}`,xm,pad.t-5);
+    const idx=Math.round((Math.log10(marker)-Math.log10(xMin))/(Math.log10(xMax)-Math.log10(xMin))*(xs.length-1));
+    if(idx>=0&&idx<Is.length){
+      const yI=toYI(Is[idx]),yA=toYA(A0s[idx]);
+      ctx.fillStyle='#ffc800';ctx.beginPath();ctx.arc(xm,yI,4,0,2*Math.PI);ctx.fill();
+      ctx.beginPath();ctx.arc(xm,yA,4,0,2*Math.PI);ctx.fill();
+      ctx.fillStyle='#00d4a0';ctx.textAlign='left';
+      ctx.fillText(`I=${fmtSci(Is[idx])}`,xm+6,yI-4);
+      ctx.fillStyle='#4a9eff';
+      ctx.fillText(`a₀=${A0s[idx].toFixed(2)}`,xm+6,yA+12);
+    }
+  }
+
+  // Axis labels
+  ctx.fillStyle='#8892a4';ctx.font='10px IBM Plex Mono,monospace';ctx.textAlign='center';
+  ctx.fillText(xLabel,pad.l+pw/2,H-5);
+  ctx.save();ctx.translate(13,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#00d4a0';ctx.textAlign='center';ctx.fillText(yLabelL,0,0);ctx.restore();
+  ctx.save();ctx.translate(W-10,pad.t+ph/2);ctx.rotate(Math.PI/2);ctx.fillStyle='#4a9eff';ctx.textAlign='center';ctx.fillText(yLabelR,0,0);ctx.restore();
+  // Legend
+  ctx.fillStyle='#00d4a0';ctx.fillRect(pad.l+8,pad.t+8,16,2);
+  ctx.fillStyle='#e2e8f0';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='left';ctx.fillText('Intensity',pad.l+28,pad.t+11);
+  ctx.fillStyle='#4a9eff';ctx.fillRect(pad.l+8,pad.t+18,16,2);
+  ctx.fillStyle='#e2e8f0';ctx.fillText('a₀',pad.l+28,pad.t+21);
+}
+
+// ════════ GAUSSIAN ════════
+function calcGaussian(){
+  const w0=parseFloat(document.getElementById('w0_g').value);
+  const lambda=parseFloat(document.getElementById('lambda_g').value);
+  const z=parseFloat(document.getElementById('z_g').value);
+  if(isNaN(w0)||isNaN(lambda)||isNaN(z)||w0<=0||lambda<=0){showResult('gaussianResult','Please enter valid positive values for w₀ and λ.',true);return;}
+  const zR=Math.PI*w0*w0/lambda,wz=w0*Math.sqrt(1+(z/zR)**2);
+  let html=`<div class="result-label">Result at z = ${fmtSci(z)} m</div>`;
+  html+=`z_R = ${fmtSci(zR)} m &nbsp;|&nbsp; w(z) = ${fmtSci(wz)} m`;
+  showResult('gaussianResult',html);
+  drawGaussianPlot(w0,lambda,zR,z);
+}
+function drawGaussianPlot(w0,lambda,zR,zTarget){
+  const canvas=document.getElementById('gaussianCanvas');
+  canvas.style.display='block';
+  const W=820,H=255;canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  const pad={t:18,b:36,l:60,r:20};
+  const pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  ctx.fillStyle='#1e2230';ctx.fillRect(0,0,W,H);
+  const zMin=-4*zR,zMax=4*zR,wMax=w0*Math.sqrt(17)*1.05;
+  const toX=z=>pad.l+(z-zMin)/(zMax-zMin)*pw;
+  const toY=w=>pad.t+ph-(w/wMax)*ph;
+  ctx.strokeStyle='#2a2f3d';ctx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){const y=pad.t+(i/4)*ph;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();}
+  for(let i=-4;i<=4;i++){const x=toX(i*zR);ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke();}
+  ctx.strokeStyle='#3a4050';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(pad.l,pad.t+ph);ctx.lineTo(pad.l+pw,pad.t+ph);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(pad.l,pad.t);ctx.lineTo(pad.l,pad.t+ph);ctx.stroke();
+  const steps=400;
+  ctx.strokeStyle='#00d4a0';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<=steps;i++){const z=zMin+(i/steps)*(zMax-zMin),w=w0*Math.sqrt(1+(z/zR)**2);const x=toX(z),y=toY(w);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.stroke();
+  ctx.fillStyle='rgba(0,212,160,.07)';ctx.beginPath();
+  for(let i=0;i<=steps;i++){const z=zMin+(i/steps)*(zMax-zMin),w=w0*Math.sqrt(1+(z/zR)**2);const x=toX(z),y=toY(w);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.lineTo(toX(zMax),pad.t+ph);ctx.lineTo(toX(zMin),pad.t+ph);ctx.closePath();ctx.fill();
+  const x0px=toX(0);
+  ctx.strokeStyle='#4a9eff';ctx.lineWidth=1;ctx.setLineDash([4,3]);
+  ctx.beginPath();ctx.moveTo(x0px,pad.t);ctx.lineTo(x0px,pad.t+ph);ctx.stroke();ctx.setLineDash([]);
+  const xtgt=toX(zTarget);
+  if(xtgt>=pad.l&&xtgt<=pad.l+pw){
+    const wt=w0*Math.sqrt(1+(zTarget/zR)**2),ytgt=toY(wt);
+    ctx.strokeStyle='#ffc800';ctx.lineWidth=1;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(xtgt,pad.t);ctx.lineTo(xtgt,pad.t+ph);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#ffc800';ctx.beginPath();ctx.arc(xtgt,ytgt,4,0,2*Math.PI);ctx.fill();
+    ctx.font='10px IBM Plex Mono,monospace';ctx.fillText(`w(z)=${fmtSci(wt)}m`,xtgt+6,ytgt-5);
+  }
+  ctx.fillStyle='#8892a4';ctx.font='10px IBM Plex Mono,monospace';
+  ctx.textAlign='right';ctx.fillText(fmtSci(wMax),pad.l-4,pad.t+6);ctx.fillText('0',pad.l-4,pad.t+ph+4);
+  ctx.textAlign='center';ctx.fillText('z / z_R',pad.l+pw/2,H-4);
+  ctx.fillText('-4',toX(-4*zR),pad.t+ph+13);ctx.fillText('0',toX(0),pad.t+ph+13);ctx.fillText('+4',toX(4*zR),pad.t+ph+13);
+  ctx.textAlign='left';ctx.fillStyle='#4a9eff';ctx.fillText('z=0 (focus)',x0px+5,pad.t+11);
+  ctx.save();ctx.translate(12,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#8892a4';ctx.textAlign='center';ctx.fillText('w(z) [m]',0,0);ctx.restore();
+}
+
+// ════════ HELPERS ════════
+function fmtSci(v){
+  if(v===0) return '0';
+  const exp=Math.floor(Math.log10(Math.abs(v)));
+  if(Math.abs(exp)<4) return parseFloat(v.toPrecision(4)).toString();
+  return v.toExponential(3);
+}
+function showResult(id,html,isError){
+  const el=document.getElementById(id);
+  el.innerHTML=html;el.classList.add('visible');
+  el.style.borderLeftColor=isError?'var(--danger)':'';
+}
+</script>
+</body>
+</html>
