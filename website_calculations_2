@@ -6,8 +6,6 @@
 <title>LOLAUS — Laser Optics Toolkit</title>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 <script>
-//Jeremy M Rebenstock Jrebenst@umich.edu
-//Updated 4/15/2026
 // ═══════════════════════════════════════════════════════════════
 // TIFF DECODER  —  self-contained, zero external dependencies
 // ═══════════════════════════════════════════════════════════════
@@ -226,6 +224,14 @@ function encodeTIFF16(intensity, width, height) {
     <div id="eeResult" class="result-box"></div>
     <div id="dlResult" class="result-box" style="border-left-color:var(--orange);"></div>
 
+    <!-- Ellipticity chips -->
+    <div id="ellipRow" class="ellip-row">
+      <div class="ellip-chip"><span class="el">Ellipticity ε</span><span id="ellipValue">—</span></div>
+      <div class="ellip-chip"><span class="el">Semi-axes (px)</span><span id="ellipAxes">—</span></div>
+      <div class="ellip-chip"><span class="el">Major-axis angle</span><span id="ellipAngle">—</span></div>
+      <div class="ellip-chip" id="ellipNote" style="border-color:var(--muted);"></div>
+    </div>
+
     <!-- Image pair -->
     <div id="plotsRow" style="display:none;flex-wrap:wrap;gap:10px;margin-top:16px;">
       <div style="flex:1;min-width:270px;">
@@ -259,15 +265,6 @@ function encodeTIFF16(intensity, width, height) {
       </div>
     </div>
 
-    <!-- Ellipticity chips -->
-    <div id="ellipRow" class="ellip-row">
-      <div class="ellip-chip"><span class="el">Ellipticity ε</span><span id="ellipValue">—</span></div>
-      <div class="ellip-chip"><span class="el">Semi-axes (px)</span><span id="ellipAxes">—</span></div>
-      <div class="ellip-chip"><span class="el">Major-axis angle</span><span id="ellipAngle">—</span></div>
-      <div class="ellip-chip" id="ellipNote" style="border-color:var(--muted);"></div>
-    </div>
-
-    
     <!-- Accordions -->
     <div class="explain-block">
       <div class="explain-header" onclick="toggleExplain('centroidExp',this)">▸ How the centroid is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
@@ -498,7 +495,13 @@ function drawOverlays(canvas){
   // centroid dot
   ctx.beginPath();ctx.arc(cx,cy,Math.max(2,imgWidth/400),0,2*Math.PI);
   ctx.fillStyle='#4a9eff';ctx.fill();
-  // ellipse overlay - REMOVED
+  // ellipse overlay
+  if(ellipEps!==null&&ellipW1>0){
+    ctx.save();ctx.translate(cx,cy);ctx.rotate(ellipTheta*Math.PI/180);
+    ctx.beginPath();ctx.ellipse(0,0,ellipW1,ellipW2,0,0,2*Math.PI);
+    ctx.strokeStyle='rgba(255,200,0,0.75)';ctx.lineWidth=lw;ctx.setLineDash([lw*3,lw*2]);ctx.stroke();ctx.setLineDash([]);
+    ctx.restore();
+  }
 }
 function showBothPlots(withOverlay){
   const cL=document.getElementById('spotCanvas'),cLg=document.getElementById('spotCanvasLog');
@@ -904,3 +907,4 @@ function showResult(id,html,isError){
 </script>
 </body>
 </html>
+
