@@ -3,9 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LOLAUS — Laser Optics Toolkit</title>
+<title>IOLAUS — Laser Optics Toolkit</title>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 <script>
+//University of Michigan Center for Gerard Mourou Ultrafast Optical Sciences
+//Jeremy M Rebenstock Jrebenst@umich.edu
+//Updated 4/16/2026
+//
 // ═══════════════════════════════════════════════════════════════
 // TIFF DECODER  —  self-contained, zero external dependencies
 // ═══════════════════════════════════════════════════════════════
@@ -165,7 +169,7 @@ function encodeTIFF16(intensity, width, height) {
 </head>
 <body>
 <header>
-  <div class="logo">Laser OnLine Analysis for Users of pettawatt Systems <span>// LOLAUS</span></div>
+  <div class="logo"> Intuitive Online Laser Analysis for Users of petawatt Systems <span>// IOLAUS</span></div>
   <nav>
     <button class="active" onclick="showTab('home',this)">Home</button>
     <button onclick="showTab('spot',this)">Spot Calc</button>
@@ -209,8 +213,8 @@ function encodeTIFF16(intensity, width, height) {
     <div id="fileStatus">No file loaded.</div>
 
     <div class="input-row">
-      <div class="input-group"><label>µm per pixel (optional)</label><input type="number" id="um_per_pixel" placeholder="e.g. 3.45" step="any" min="0"></div>
-      <div class="input-group"><label>Diffraction limit radius (µm, optional)</label><input type="number" id="r_dl" placeholder="e.g. 5.0" step="any" min="0"></div>
+      <div class="input-group"><label>Microns per pixel (optional)</label><input type="number" id="um_per_pixel" placeholder="e.g. 3.45" step="any" min="0"></div>
+      <div class="input-group"><label>Diffraction limit radius (Microns, optional)</label><input type="number" id="r_dl" placeholder="e.g. 5.0" step="any" min="0"></div>
     </div>
 
     <div class="btn-group">
@@ -224,14 +228,6 @@ function encodeTIFF16(intensity, width, height) {
     <div id="eeResult" class="result-box"></div>
     <div id="dlResult" class="result-box" style="border-left-color:var(--orange);"></div>
 
-    <!-- Ellipticity chips -->
-    <div id="ellipRow" class="ellip-row">
-      <div class="ellip-chip"><span class="el">Ellipticity ε</span><span id="ellipValue">—</span></div>
-      <div class="ellip-chip"><span class="el">Semi-axes (px)</span><span id="ellipAxes">—</span></div>
-      <div class="ellip-chip"><span class="el">Major-axis angle</span><span id="ellipAngle">—</span></div>
-      <div class="ellip-chip" id="ellipNote" style="border-color:var(--muted);"></div>
-    </div>
-
     <!-- Image pair -->
     <div id="plotsRow" style="display:none;flex-wrap:wrap;gap:10px;margin-top:16px;">
       <div style="flex:1;min-width:270px;">
@@ -243,7 +239,16 @@ function encodeTIFF16(intensity, width, height) {
         <div class="canvas-wrap visible" style="margin-top:4px;"><canvas id="spotCanvasLog"></canvas></div>
       </div>
     </div>
+    
+    <!-- Ellipticity chips -->
+    <div id="ellipRow" class="ellip-row">
+      <div class="ellip-chip"><span class="el">Ellipticity ε</span><span id="ellipValue">—</span></div>
+      <div class="ellip-chip"><span class="el">Semi-axes (px)</span><span id="ellipAxes">—</span></div>
+      <div class="ellip-chip"><span class="el">Major-axis angle</span><span id="ellipAngle">—</span></div>
+      <div class="ellip-chip" id="ellipNote" style="border-color:var(--muted);"></div>
+    </div>
 
+    
     <!-- Measurement Log -->
     <div id="resultsTableWrap" style="margin-top:24px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
@@ -256,7 +261,7 @@ function encodeTIFF16(intensity, width, height) {
       <div style="overflow-x:auto;">
         <table id="resultsTable">
           <thead>
-            <tr><th>File</th><th>Centroid (px)</th><th>µm/px</th><th>r₈₆.₅ (px)</th><th>r₈₆.₅ (µm)</th><th>Ellipticity ε</th><th>Angle °</th><th>DL (µm)</th><th>Strehl</th></tr>
+            <tr><th>File</th><th>Centroid (px)</th><th>Microns/px</th><th>r₈₆.₅ (px)</th><th>r₈₆.₅ (Microns)</th><th>Ellipticity ε</th><th>Angle °</th><th>DL (Microns)</th><th>Strehl</th></tr>
           </thead>
           <tbody id="resultsBody">
             <tr id="emptyRow"><td colspan="9" style="text-align:center;color:var(--muted);font-style:italic;padding:14px 9px;font-size:11px;">No measurements yet — load a TIFF and click <strong style="color:var(--text);">Calculate 86.5% EE Radius</strong></td></tr>
@@ -265,6 +270,9 @@ function encodeTIFF16(intensity, width, height) {
       </div>
     </div>
 
+
+
+    
     <!-- Accordions -->
     <div class="explain-block">
       <div class="explain-header" onclick="toggleExplain('centroidExp',this)">▸ How the centroid is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
@@ -275,6 +283,15 @@ function encodeTIFF16(intensity, width, height) {
       </div>
     </div>
     <div class="explain-block">
+      <div class="explain-header" onclick="toggleExplain('strehlExp',this)">▸ How the Strehl ratio is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
+      <div class="explain-body" id="strehlExp">
+        <p>The <strong>Strehl ratio</strong> S is the ratio of the intensity between an abberated and idealized focal spot. S = I_measured/I_Diffraction-Limited.  S = 1 is the maximum corrseponding to a perfectly focused diffraction limited spot.   </p>
+       <div class="eq-block">\[S = \frac{I_{\text{measured}}}{I_{\text{DL}}}= \frac{P/A_{\text{measured}}}{P/A_{\text{DL}}}= \frac{P}{\pi r₈₆.₅^2} \Big/ \frac{P}{\pi r_{\text{DL}}^2}= \left(\frac{r_{\text{DL}}}{r₈₆.₅}\right)^2\]</div>
+        <p>r<sub>DL</sub> is the theoretical diffraction-limited radius, r₈₆.₅ is the radius of the calculated 86.5% EE spot. P is the power of the system and A is the area. So we see for a fixed power, the Strehl ratio can be given by the square of the of the diffraction limited spot over the measured spot radius. We note this treatment of the focal spot is most accurate for nearly-Gaussian beams with mild aberrations.</p>
+      </div>
+    </div>
+    
+    <div class="explain-block">
       <div class="explain-header" onclick="toggleExplain('ellipExp',this)">▸ How ellipticity is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
       <div class="explain-body" id="ellipExp">
         <p>Ellipticity uses the <strong>second-moment (variance–covariance) tensor</strong> of the intensity:</p>
@@ -283,14 +300,7 @@ function encodeTIFF16(intensity, width, height) {
         <p>The yellow dashed ellipse overlaid on the image represents the 1/e² principal-axis ellipse derived from the second moments.</p>
       </div>
     </div>
-    <div class="explain-block">
-      <div class="explain-header" onclick="toggleExplain('strehlExp',this)">▸ How the Strehl ratio is calculated<span class="arrow" style="transition:transform .2s;font-size:9px;">▼</span></div>
-      <div class="explain-body" id="strehlExp">
-        <p>The <strong>Strehl ratio</strong> S compares a real beam to the diffraction-limited ideal. S = 1 is the maximum; S ≥ 0.8 is the Maréchal criterion.</p>
-        <div class="math-line">\(S\approx\!\left(\dfrac{r_\text{DL}}{r_{86.5}}\right)^{\!2}\)</div>
-        <p>r<sub>DL</sub> is the theoretical diffraction-limited 86.5% EE radius you supply; r₈₆.₅ is the measured radius. For a fixed total energy, peak intensity scales as 1/r², so the ratio of peak intensities equals the inverse square of the radii. This approximation is most accurate for nearly-Gaussian beams with mild aberrations (S ≳ 0.3).</p>
-      </div>
-    </div>
+    
   </div>
 </div>
 
@@ -299,18 +309,18 @@ function encodeTIFF16(intensity, width, height) {
   <div class="card">
     <h2>Peak Intensity &amp; Normalised Vector Potential a₀</h2>
     <div class="eq-block">
-      \( I_0 = \dfrac{2\ln2}{\pi}\cdot\dfrac{E}{\tau\,\pi\,r_{86.5}^2} \qquad a_0 = \sqrt{\dfrac{I_0\,\lambda_{\mu\text{m}}^2}{1.37\times10^{18}}} \)
+      \( I_0 = \dfrac{E}{\tau\,\pi\,r_{86.5}^2} \qquad a_0 = \sqrt{\dfrac{I_0\,\lambda_{\mu\text{m}}^2}{1.37\times10^{18}}} \)
     </div>
     <p>
-      Peak intensity \(I_0\) [W/cm²] for a spatially and temporally Gaussian pulse of energy \(E\) [J], FWHM duration τ [fs], and 1/e² radius \(r_{86.5}\) [µm].
-      The factor \(2\ln 2/\pi\approx0.441\) arises from integrating a Gaussian in time; dividing by \(\pi r^2\) gives the peak of the spatial Gaussian.
-      \(a_0\) uses λ in µm; the constant 1.37×10¹⁸ W/cm²/µm² is the relativistic intensity threshold for λ = 1 µm.
+      Peak intensity \(I_0\) [W/cm²] for a spatially and temporally Gaussian pulse of energy \(E\) [J], FWHM duration τ [fs], and 1/e² radius \(r_{86.5}\) [Microns].
+      
+      \(a_0\) uses λ in Microns; the constant 1.37×10¹⁸ W/cm²/Microns² is the relativistic intensity threshold for λ = 1 Microns.
     </p>
     <div class="input-row">
       <div class="input-group"><label>Pulse duration τ (fs) *</label><input type="number" id="i_tau" placeholder="e.g. 30" step="any" min="0"></div>
-      <div class="input-group"><label>Wavelength λ (µm)</label><input type="number" id="i_lambda" placeholder="e.g. 0.8" step="any" min="0" value="0.8"></div>
+      <div class="input-group"><label>Wavelength λ (Microns)</label><input type="number" id="i_lambda" placeholder="e.g. 0.8" step="any" min="0" value="0.8"></div>
       <div class="input-group"><label>Energy E (J) — optional</label><input type="number" id="i_energy" placeholder="e.g. 20" step="any" min="0"></div>
-      <div class="input-group"><label>r₈₆.₅ (µm) — optional</label><input type="number" id="i_radius" placeholder="e.g. 8.0" step="any" min="0"></div>
+      <div class="input-group"><label>r₈₆.₅ (Microns) — optional</label><input type="number" id="i_radius" placeholder="e.g. 8.0" step="any" min="0"></div>
     </div>
     <div class="btn-group">
       <button class="btn btn-primary" onclick="calcIntensityPlots()">Calculate &amp; Plot</button>
@@ -326,14 +336,7 @@ function encodeTIFF16(intensity, width, height) {
           <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportPlotTIFF('canvasIvsE','intensity_vs_energy')">Export TIFF</button>
         </div>
       </div>
-      <!-- Plot: I vs Radius -->
-      <div>
-        <div class="plot-title" id="titleIvsR">I &amp; a₀ vs Radius — requires τ and E</div>
-        <canvas id="canvasIvsR" class="plot-canvas" height="300" style="display:none;"></canvas>
-        <div style="margin-top:5px;display:flex;gap:7px;justify-content:flex-end;">
-          <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportPlotTIFF('canvasIvsR','intensity_vs_radius')">Export TIFF</button>
-        </div>
-      </div>
+      <!-- Plot: I vs Radius  (REMOVED)-->
     </div>
   </div>
 </div>
@@ -495,13 +498,7 @@ function drawOverlays(canvas){
   // centroid dot
   ctx.beginPath();ctx.arc(cx,cy,Math.max(2,imgWidth/400),0,2*Math.PI);
   ctx.fillStyle='#4a9eff';ctx.fill();
-  // ellipse overlay
-  if(ellipEps!==null&&ellipW1>0){
-    ctx.save();ctx.translate(cx,cy);ctx.rotate(ellipTheta*Math.PI/180);
-    ctx.beginPath();ctx.ellipse(0,0,ellipW1,ellipW2,0,0,2*Math.PI);
-    ctx.strokeStyle='rgba(255,200,0,0.75)';ctx.lineWidth=lw;ctx.setLineDash([lw*3,lw*2]);ctx.stroke();ctx.setLineDash([]);
-    ctx.restore();
-  }
+  // ellipse overlay - REMOVED
 }
 function showBothPlots(withOverlay){
   const cL=document.getElementById('spotCanvas'),cLg=document.getElementById('spotCanvasLog');
@@ -552,10 +549,10 @@ function calculateEE(){
 
   let html=`<div class="result-label">86.5% Encircled Energy Radius (1/e² equivalent)</div>`;
   html+=`r₈₆.₅ = ${r865.toFixed(2)} px`;
-  if(r865_um!==null) html+=`&nbsp;|&nbsp;${r865_um.toFixed(2)} µm`;
+  if(r865_um!==null) html+=`&nbsp;|&nbsp;${r865_um.toFixed(2)} Microns`;
   if(strehlVal!==null) html+=`&nbsp;|&nbsp;Strehl ≈ ${strehlVal.toFixed(3)}`;
   html+=`<br><span style="font-size:10px;color:var(--muted);margin-top:4px;display:block">centroid: (${cx.toFixed(1)}, ${cy.toFixed(1)}) px`;
-  if(!isNaN(um)&&um>0) html+=`&nbsp;|&nbsp;scale: ${um} µm/px`;
+  if(!isNaN(um)&&um>0) html+=`&nbsp;|&nbsp;scale: ${um} Microns/px`;
   if(noiseFloor>0) html+=`&nbsp;|&nbsp;noise floor ${noiseFloor} subtracted`;
   if(burntCount>0) html+=`&nbsp;|&nbsp;<span style="color:#ffc800">${burntCount} burnt px corrected</span>`;
   html+=`</span>`;
@@ -572,16 +569,17 @@ function plotCircle(){
   if(r865===0){alert('Run Calculate 86.5% EE Radius first.');return;}
   showBothPlots(true);
 }
+// adjusting overlay (not showing DL agagin)
 function plotDiffractionLimit(){
   const um=parseFloat(document.getElementById('um_per_pixel').value);
   const rdl=parseFloat(document.getElementById('r_dl').value);
-  if(isNaN(um)||um<=0||isNaN(rdl)||rdl<=0){alert('Please enter both µm/pixel and DL radius (µm).');return;}
+  if(isNaN(um)||um<=0||isNaN(rdl)||rdl<=0){alert('Please enter both Microns/pixel and DL radius (Microns).');return;}
   if(!intensityData){alert('Please run Calculate 86.5% EE Radius first.');return;}
   const rdl_px=rdl/um,r865_um=r865*um,strehl=(rdl/r865_um)**2;
-  let shtml=`<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
-  shtml+=`DL = ${rdl.toFixed(2)} µm (${rdl_px.toFixed(1)} px)&nbsp;|&nbsp;r₈₆.₅ = ${r865_um.toFixed(2)} µm&nbsp;|&nbsp;<strong>Strehl ≈ ${strehl.toFixed(3)}</strong>`;
-  if(strehl>1) shtml+=` <span style="color:#ffc800">(> 1: tighter than DL estimate)</span>`;
-  showResult('dlResult',shtml);
+  //let shtml=`<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
+  //shtml+=`DL = ${rdl.toFixed(2)} Microns (${rdl_px.toFixed(1)} px)&nbsp;|&nbsp;r₈₆.₅ = ${r865_um.toFixed(2)} Microns&nbsp;|&nbsp;<strong>Strehl ≈ ${strehl.toFixed(3)}</strong>`;
+  //if(strehl>1) shtml+=` <span style="color:#ffc800">(> 1: tighter than DL estimate)</span>`;
+  //showResult('dlResult',shtml);
   showBothPlots(r865>0);
   [document.getElementById('spotCanvas'),document.getElementById('spotCanvasLog')].forEach(canvas=>{
     const ctx=canvas.getContext('2d'),lw=Math.max(1,imgWidth/600);
@@ -589,7 +587,7 @@ function plotDiffractionLimit(){
     ctx.strokeStyle='#ff9500';ctx.lineWidth=lw*1.5;ctx.setLineDash([Math.max(3,lw*4),Math.max(3,lw*3)]);ctx.stroke();ctx.setLineDash([]);
     const fs=Math.max(11,Math.round(imgWidth/120));
     ctx.fillStyle='#ff9500';ctx.font=`${fs}px IBM Plex Mono,monospace`;
-    ctx.fillText(`DL ${rdl.toFixed(1)}µm`,cx+rdl_px+4,cy-fs);
+    ctx.fillText(`DL ${rdl.toFixed(1)}Microns`,cx+rdl_px+4,cy-fs);
     ctx.fillText(`S ${strehl.toFixed(3)}`,cx+rdl_px+4,cy+fs*0.2);
   });
 }
@@ -675,13 +673,15 @@ function exportCSV(){
   });
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download='lolaus_measurement_log.csv';
+  a.href=URL.createObjectURL(blob); a.download='IOLAUS_measurement_log.csv';
   a.click(); URL.revokeObjectURL(a.href);
 }
 
 // ════════ INTENSITY / a0 ════════
+//const LN2=Math.log(2);  ignore for now? 
+//const I0_FACTOR=(2*LN2)/Math.PI; // ≈ 0.4413
 const LN2=Math.log(2);
-const I0_FACTOR=(2*LN2)/Math.PI; // ≈ 0.4413
+const I0_FACTOR=1; // ≈ 0.4413
 
 function peakI(E_J,tau_s,r_cm){ return I0_FACTOR*E_J/(tau_s*Math.PI*r_cm*r_cm); }
 function a0fromI(I,lam_um){ return Math.sqrt(I*lam_um*lam_um/1.37e18); }
@@ -699,7 +699,7 @@ function calcIntensityPlots(){
 
   // Plot 1: vs Energy  (need r)
   if(isNaN(r_in)||r_in<=0){
-    document.getElementById('titleIvsE').textContent='⚠  Enter r₈₆.₅ (µm) to generate this plot';
+    document.getElementById('titleIvsE').textContent='⚠  Enter r₈₆.₅ (Microns) to generate this plot';
     document.getElementById('canvasIvsE').style.display='none';
   } else {
     const r_cm=r_in*1e-4;
@@ -708,20 +708,14 @@ function calcIntensityPlots(){
   }
 
   // Plot 2: vs Radius  (need E)
-  if(isNaN(E_in)||E_in<=0){
-    document.getElementById('titleIvsR').textContent='⚠  Enter Energy (J) to generate this plot';
-    document.getElementById('canvasIvsR').style.display='none';
-  } else {
-    drawIvsR(tau_s,E_in,lam_um,isNaN(r_in)?null:r_in);
-    plotted=true;
-  }
+  //removing this plot
 
   // Summary
   if(!isNaN(r_in)&&r_in>0&&!isNaN(E_in)&&E_in>0){
     const I=peakI(E_in,tau_s,r_in*1e-4);
     const a=a0fromI(I,lam_um);
     let html=`<div class="result-label">Peak values at given inputs</div>`;
-    html+=`E=${E_in} J &nbsp;|&nbsp; r₈₆.₅=${r_in} µm &nbsp;|&nbsp; τ=${tau_fs} fs &nbsp;|&nbsp; λ=${lam_um} µm<br>`;
+    html+=`E=${E_in} J &nbsp;|&nbsp; r₈₆.₅=${r_in} Microns &nbsp;|&nbsp; τ=${tau_fs} fs &nbsp;|&nbsp; λ=${lam_um} Microns<br>`;
     html+=`<span style="color:var(--accent)">I₀ = ${fmtSci(I)} W/cm²</span> &nbsp;&nbsp; <span style="color:var(--accent2)">a₀ = ${a.toFixed(3)}</span>`;
     showResult('intensityResult',html);
   }
@@ -736,7 +730,7 @@ function drawIvsE(tau_s,r_cm,lam_um,E_marker){
   const xs=[],Is=[],A0s=[];
   for(let i=0;i<=nPts;i++){const e=EMin*Math.pow(EMax/EMin,i/nPts);const I=peakI(e,tau_s,r_cm);xs.push(e);Is.push(I);A0s.push(a0fromI(I,lam_um));}
   drawDualLogPlot(canvas,xs,Is,A0s,'Energy (J)','Intensity (W/cm²)','a₀',EMin,EMax,E_marker,'J');
-  document.getElementById('titleIvsE').textContent=`I & a₀ vs Energy  (τ=${(tau_s*1e15).toFixed(0)} fs, r=${(r_cm*1e4).toFixed(1)} µm)`;
+  document.getElementById('titleIvsE').textContent=`I & a₀ vs Energy  (τ=${(tau_s*1e15).toFixed(0)} fs, r=${(r_cm*1e4).toFixed(1)} Microns)`;
 }
 
 function drawIvsR(tau_s,E_J,lam_um,r_marker_um){
@@ -747,7 +741,7 @@ function drawIvsR(tau_s,E_J,lam_um,r_marker_um){
   const rMin=1,rMax=1000,nPts=600;
   const xs=[],Is=[],A0s=[];
   for(let i=0;i<=nPts;i++){const r_um=rMin*Math.pow(rMax/rMin,i/nPts);const r_cm=r_um*1e-4;const I=peakI(E_J,tau_s,r_cm);xs.push(r_um);Is.push(I);A0s.push(a0fromI(I,lam_um));}
-  drawDualLogPlot(canvas,xs,Is,A0s,'r₈₆.₅ (µm)','Intensity (W/cm²)','a₀',rMin,rMax,r_marker_um,'µm');
+  drawDualLogPlot(canvas,xs,Is,A0s,'r₈₆.₅ (Microns)','Intensity (W/cm²)','a₀',rMin,rMax,r_marker_um,'Microns');
   document.getElementById('titleIvsR').textContent=`I & a₀ vs Radius  (τ=${(tau_s*1e15).toFixed(0)} fs, E=${E_J} J)`;
 }
 
@@ -907,4 +901,3 @@ function showResult(id,html,isError){
 </script>
 </body>
 </html>
-
