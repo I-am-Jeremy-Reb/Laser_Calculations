@@ -8,7 +8,7 @@
 <script>
 //University of Michigan Center for Gerard Mourou Ultrafast Optical Sciences
 //Jeremy M Rebenstock Jrebenst@umich.edu
-//Updated 4/16/2026
+//Updated 4/21/2026
 //
 // ═══════════════════════════════════════════════════════════════
 // TIFF DECODER  —  self-contained, zero external dependencies
@@ -135,6 +135,7 @@ function encodeTIFF16(intensity, width, height) {
   .status-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 6px;border-radius:3px;margin-left:5px;}
   .status-ok{background:rgba(0,212,160,.15);color:var(--accent);}
   .status-wait{background:rgba(255,200,0,.12);color:#ffc800;}
+  .status-err{background:rgba(255,107,107,.15);color:var(--danger);}
   /* Ellipticity row */
   .ellip-row{display:none;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center;}
   .ellip-chip{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:7px 13px;font-family:'IBM Plex Mono',monospace;font-size:12px;}
@@ -165,6 +166,19 @@ function encodeTIFF16(intensity, width, height) {
   .dual-plot-row>div{flex:1;min-width:300px;}
   canvas.plot-canvas{display:block;width:100%;border:1px solid var(--border);border-radius:6px;background:var(--surface2);}
   #gaussianCanvas{display:block;max-width:100%;margin-top:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);}
+
+  /* ── File / Folder selector toggle ── */
+  .source-toggle{display:flex;gap:0;margin-bottom:12px;border:1px solid var(--border);border-radius:5px;overflow:hidden;width:fit-content;}
+  .source-toggle button{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;padding:6px 14px;border:none;background:var(--surface2);color:var(--muted);cursor:pointer;transition:all .15s;}
+  .source-toggle button.active{background:rgba(0,212,160,.12);color:var(--accent);}
+  .source-toggle button:first-child{border-right:1px solid var(--border);}
+
+  /* ── Batch progress bar ── */
+  #batchProgress{display:none;margin-top:12px;}
+  #batchProgressBar{height:3px;background:var(--surface2);border-radius:2px;overflow:hidden;margin-bottom:6px;}
+  #batchProgressFill{height:100%;width:0%;background:var(--accent);transition:width .2s;}
+  #batchProgressText{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);}
+  #batchErrors{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--danger);margin-top:5px;max-height:80px;overflow-y:auto;display:none;}
 </style>
 </head>
 <body>
@@ -186,14 +200,15 @@ function encodeTIFF16(intensity, width, height) {
     <div class="hero-title">Laser <span>Optics</span> Toolkit</div>
     <div class="hero-sub">Diagnostics and beam analysis for laser plasma physics — all processing runs locally in your browser</div>
     <div class="feature-grid">
-      <div class="feature-item"><div class="f-label">Spot Calculation</div><div class="f-desc">86.5% EE radius (1/e²), intensity centroid, beam ellipticity, Strehl ratio. Export images as 16-bit TIFF.</div></div>
+      <div class="feature-item"><div class="f-label">Spot Calculation</div><div class="f-desc">86.5% EE radius (1/e²), intensity centroid, beam ellipticity, Strehl ratio. Single file or batch folder. Export images as 16-bit TIFF.</div></div>
       <div class="feature-item"><div class="f-label">Intensity / a₀</div><div class="f-desc">Peak intensity and normalised vector potential a₀ vs energy and spot size, with log–log plots and vertical markers.</div></div>
       <div class="feature-item"><div class="f-label">Gaussian Beam</div><div class="f-desc">Compute w(z) from focus given w₀ and λ. Full Rayleigh-range beam envelope plot.</div></div>
       <div class="feature-item"><div class="f-label">Export</div><div class="f-desc">Export beam images as 16-bit TIFF and measurement log as CSV directly from the browser.</div></div>
     </div>
     <div class="logo-row">
-      <div class="logo-placeholder">⚡ ZEUS Facility</div>
-      <div class="logo-placeholder">◈ NSF</div>
+      <img src="NSF_Logo.jpg" alt="Test NSF logo" width="150" height="150">
+      <img src="ZEUS_Logo.jpg" alt="Test ZEUS logo" width="450" height="150">
+      <img src="Michigan_Logo.jpg" alt="Test Michigan logo" width="150" height="150">
       <div style="flex:1"></div>
       <div class="dev-line">Developer: <a href="https://sites.google.com/view/jeremy-rebenstock/about" target="_blank">Jeremy Rebenstock</a></div>
     </div>
@@ -207,28 +222,58 @@ function encodeTIFF16(intensity, width, height) {
     <div class="eq-block">
       \( E(r)=\displaystyle\int_0^r I(r')\,2\pi r'\,dr' \;\Rightarrow\; r_{86.5}: E(r_{86.5})=0.865\,E_\text{total} \)
     </div>
-    <p>Upload a TIFF beam profile. Computes the intensity centroid, 86.5% EE radius, beam ellipticity from the second-moment tensor, and Strehl ratio.</p>
+    <p>Upload a TIFF beam profile, or select a folder to batch-process all TIFFs inside it. Computes the intensity centroid, 86.5% EE radius, beam ellipticity, and Strehl ratio.</p>
 
-    <input type="file" id="upload" accept=".tif,.tiff">
+    <!-- Source mode toggle -->
+    <div class="source-toggle">
+      <button id="modeFileBtn" class="active" onclick="setSourceMode('file')">Single File</button>
+      <button id="modeFolderBtn" onclick="setSourceMode('folder')">Folder / Batch</button>
+    </div>
+
+    <!-- Single-file input -->
+    <div id="singleFileWrap">
+      <input type="file" id="upload" accept=".tif,.tiff">
+    </div>
+
+    <!-- Folder input -->
+    <div id="folderWrap" style="display:none;">
+      <input type="file" id="uploadFolder" accept=".tif,.tiff" webkitdirectory multiple>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);margin-top:5px;">
+        Select a folder — all .tif/.tiff files inside will be queued for batch analysis.
+      </div>
+    </div>
+
     <div id="fileStatus">No file loaded.</div>
+
+    <!-- Batch progress -->
+    <div id="batchProgress">
+      <div id="batchProgressBar"><div id="batchProgressFill"></div></div>
+      <div id="batchProgressText">0 / 0 files processed</div>
+      <div id="batchErrors"></div>
+    </div>
 
     <div class="input-row">
       <div class="input-group"><label>Microns per pixel (optional)</label><input type="number" id="um_per_pixel" placeholder="e.g. 3.45" step="any" min="0"></div>
       <div class="input-group"><label>Diffraction limit radius (Microns, optional)</label><input type="number" id="r_dl" placeholder="e.g. 5.0" step="any" min="0"></div>
     </div>
 
-    <div class="btn-group">
+    <!-- Single-file buttons -->
+    <div id="singleBtnGroup" class="btn-group">
       <button class="btn btn-secondary" onclick="showImage()">Show Image</button>
       <button class="btn btn-primary"   onclick="calculateEE()">Calculate 86.5% EE Radius</button>
       <button class="btn btn-secondary" onclick="plotCircle()">Draw 86.5% Circle</button>
       <button class="btn btn-secondary" onclick="plotDiffractionLimit()">Draw Diffraction Limit</button>
     </div>
 
+    <!-- Batch buttons -->
+    <div id="batchBtnGroup" class="btn-group" style="display:none;">
+      <button class="btn btn-primary" onclick="runBatchAnalysis()">Analyze All Files</button>
+    </div>
 
     <div id="eeResult" class="result-box"></div>
     <div id="dlResult" class="result-box" style="border-left-color:var(--orange);"></div>
 
-    <!-- Image pair -->
+    <!-- Image pair (single-file mode only) -->
     <div id="plotsRow" style="display:none;flex-wrap:wrap;gap:10px;margin-top:16px;">
       <div style="flex:1;min-width:270px;">
         <div class="plot-title" id="titleLinear"></div>
@@ -279,7 +324,7 @@ function encodeTIFF16(intensity, width, height) {
       <div class="explain-body" id="centroidExp">
         <p>The <strong>intensity-weighted centroid</strong> locates the beam's centre of mass:</p>
         <div class="math-line">\(\bar{x}=\dfrac{\sum x\,I(x,y)}{\sum I},\qquad\bar{y}=\dfrac{\sum y\,I(x,y)}{\sum I}\)</div>
-        <p>Only pixels above 10% of the peak contribute, preventing read-out noise from biasing the result. The camera noise floor (histogram peak in the low-level range) is subtracted beforehand, and saturated pixels are replaced by the 5×5 neighbourhood median. The centroid is sub-pixel accurate.</p>
+        <p>Only pixels above 10% of the peak contribute, preventing read-out noise from biasing the result. The camera noise floor (histogram peak in the low-level range) is subtracted beforehand. Saturated pixels are replaced by the 5×5 neighbourhood median.</p>
       </div>
     </div>
     <div class="explain-block">
@@ -328,7 +373,6 @@ function encodeTIFF16(intensity, width, height) {
     <div id="intensityResult" class="result-box"></div>
 
     <div class="dual-plot-row">
-      <!-- Plot: I vs Energy -->
       <div>
         <div class="plot-title" id="titleIvsE">I &amp; a₀ vs Energy — requires τ and r₈₆.₅</div>
         <canvas id="canvasIvsE" class="plot-canvas" height="300" style="display:none;"></canvas>
@@ -336,7 +380,6 @@ function encodeTIFF16(intensity, width, height) {
           <button class="btn btn-orange" style="padding:4px 10px;font-size:10px;" onclick="exportPlotTIFF('canvasIvsE','intensity_vs_energy')">Export TIFF</button>
         </div>
       </div>
-      <!-- Plot: I vs Radius  (REMOVED)-->
     </div>
   </div>
 </div>
@@ -386,7 +429,26 @@ let intensityData=null;
 let ellipEps=null,ellipW1=null,ellipW2=null,ellipTheta=null;
 let tableRows=[];
 
-// ════════ TIFF LOAD ════════
+// ════════ SOURCE MODE (file vs folder) ════════
+let sourceMode='file';   // 'file' | 'folder'
+let folderFiles=[];      // File objects from folder input
+
+function setSourceMode(mode){
+  sourceMode=mode;
+  document.getElementById('modeFileBtn').classList.toggle('active',mode==='file');
+  document.getElementById('modeFolderBtn').classList.toggle('active',mode==='folder');
+  document.getElementById('singleFileWrap').style.display=mode==='file'?'':'none';
+  document.getElementById('folderWrap').style.display=mode==='folder'?'':'none';
+  document.getElementById('singleBtnGroup').style.display=mode==='file'?'':'none';
+  document.getElementById('batchBtnGroup').style.display=mode==='folder'?'':'none';
+  document.getElementById('batchProgress').style.display='none';
+  document.getElementById('plotsRow').style.display='none';
+  document.getElementById('ellipRow').style.display='none';
+  document.getElementById('fileStatus').textContent=mode==='file'?'No file loaded.':'No folder selected.';
+  folderFiles=[];
+}
+
+// ════════ TIFF LOAD (single file) ════════
 document.getElementById('upload').addEventListener('change',function(e){
   const file=e.target.files[0]; if(!file) return;
   currentFileName=file.name.replace(/\.[^.]+$/,'');
@@ -408,7 +470,146 @@ document.getElementById('upload').addEventListener('change',function(e){
   reader.readAsArrayBuffer(file);
 });
 
-// ════════ BUILD INTENSITY ════════
+// ════════ FOLDER LOAD ════════
+document.getElementById('uploadFolder').addEventListener('change',function(e){
+  const allFiles=Array.from(e.target.files);
+  folderFiles=allFiles.filter(f=>/\.(tif|tiff)$/i.test(f.name));
+  const statusEl=document.getElementById('fileStatus');
+  if(folderFiles.length===0){
+    statusEl.innerHTML='<span style="color:var(--danger)">No .tif/.tiff files found in selected folder.</span>';
+  } else {
+    // Sort alphabetically/numerically for consistent ordering
+    folderFiles.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+    statusEl.innerHTML=`Folder loaded &nbsp;<span class="status-badge status-ok">${folderFiles.length} TIFF${folderFiles.length!==1?'s':''} found</span>`;
+  }
+  document.getElementById('batchProgress').style.display='none';
+  document.getElementById('batchErrors').style.display='none';
+});
+
+// ════════ BATCH ANALYSIS ════════
+async function runBatchAnalysis(){
+  if(folderFiles.length===0){
+    alert('Please select a folder containing .tif/.tiff files first.');
+    return;
+  }
+  const um=parseFloat(document.getElementById('um_per_pixel').value);
+  const rdl=parseFloat(document.getElementById('r_dl').value);
+
+  const progressWrap=document.getElementById('batchProgress');
+  const fill=document.getElementById('batchProgressFill');
+  const progressText=document.getElementById('batchProgressText');
+  const errBox=document.getElementById('batchErrors');
+  progressWrap.style.display='block';
+  errBox.style.display='none';
+  errBox.textContent='';
+  fill.style.width='0%';
+  progressText.textContent=`0 / ${folderFiles.length} files processed`;
+
+  const errors=[];
+  let done=0;
+
+  for(const file of folderFiles){
+    try{
+      const arrayBuffer=await readFileAsArrayBuffer(file);
+      const {rgba,width,height}=decodeTIFF(arrayBuffer);
+
+      // Build intensity for this file
+      const N=width*height;
+      const raw=new Float64Array(N);
+      const hist=new Uint32Array(256); let dataMax=0;
+      for(let i=0;i<N;i++){const v=rgba[i*4];raw[i]=v;hist[v]++;if(v>dataMax)dataMax=v;}
+      const fsMax=Math.max(2,Math.ceil(dataMax*0.15));
+      let noisePeak=0,noisePeakCount=0;
+      for(let v=1;v<=fsMax;v++) if(hist[v]>noisePeakCount){noisePeakCount=hist[v];noisePeak=v;}
+      const noiseFloor=(noisePeakCount>N*0.01)?noisePeak:0;
+      const burnThresh=Math.max(254,dataMax*0.99);
+      const cleaned=new Float64Array(N);
+      for(let i=0;i<N;i++){const v=raw[i];if(v>=burnThresh){cleaned[i]=-1;}else cleaned[i]=Math.max(0,v-noiseFloor);}
+      for(let y=0;y<height;y++){for(let x=0;x<width;x++){
+        const idx=y*width+x; if(cleaned[idx]!==-1) continue;
+        const nb=[];
+        for(let dy=-2;dy<=2;dy++){for(let dx=-2;dx<=2;dx++){const ny=y+dy,nx=x+dx;if(ny>=0&&ny<height&&nx>=0&&nx<width){const nv=cleaned[ny*width+nx];if(nv>=0)nb.push(nv);}}}
+        nb.sort((a,b)=>a-b); cleaned[idx]=nb.length>0?nb[Math.floor(nb.length/2)]:0;
+      }}
+
+      let total=0;
+      for(let i=0;i<N;i++) total+=cleaned[i];
+      if(total===0) throw new Error('Image appears all black');
+
+      let Imax=0; for(let i=0;i<N;i++) if(cleaned[i]>Imax) Imax=cleaned[i];
+      const thresh=0.10*Imax;
+      let xS=0,yS=0,wS=0;
+      for(let y=0;y<height;y++){for(let x=0;x<width;x++){
+        const I=cleaned[y*width+x]; if(I<thresh) continue;
+        xS+=x*I; yS+=y*I; wS+=I;
+      }}
+      if(wS===0){for(let y=0;y<height;y++){for(let x=0;x<width;x++){const I=cleaned[y*width+x];xS+=x*I;yS+=y*I;wS+=I;}}}
+      const fcx=xS/wS, fcy=yS/wS;
+
+      const radial=new Array(N);
+      for(let y=0;y<height;y++){for(let x=0;x<width;x++){const idx=y*width+x;radial[idx]={r:Math.sqrt((x-fcx)**2+(y-fcy)**2),I:cleaned[idx]};}}
+      radial.sort((a,b)=>a.r-b.r);
+      const target=0.865*total; let cum=0, fr865=0;
+      for(let i=0;i<radial.length;i++){cum+=radial[i].I;if(cum>=target){fr865=radial[i].r;break;}}
+
+      // Ellipticity
+      let sxx=0,syy=0,sxy=0,W=0;
+      for(let y=0;y<height;y++){for(let x=0;x<width;x++){
+        const I=cleaned[y*width+x]; if(I<thresh) continue;
+        const dx=x-fcx,dy=y-fcy;
+        sxx+=dx*dx*I; syy+=dy*dy*I; sxy+=dx*dy*I; W+=I;
+      }}
+      let fEps=null,fTheta=null;
+      if(W>0){
+        sxx/=W; syy/=W; sxy/=W;
+        const trace=sxx+syy, det=sxx*syy-sxy*sxy;
+        const disc=Math.sqrt(Math.max(0,(trace/2)**2-det));
+        const lam1=trace/2+disc, lam2=trace/2-disc;
+        const w1=2*Math.sqrt(Math.max(0,lam1)), w2=2*Math.sqrt(Math.max(0,lam2));
+        const wMaj=Math.max(w1,w2), wMin=Math.min(w1,w2);
+        fEps=wMaj>0?wMin/wMaj:1;
+        fTheta=Math.abs(sxy)<1e-12?(sxx>=syy?0:90):Math.atan2(lam1-sxx,sxy)*180/Math.PI;
+      }
+
+      const fname=file.name.replace(/\.[^.]+$/,'');
+      let r865_um=null,strehlVal=null;
+      if(!isNaN(um)&&um>0){r865_um=fr865*um;if(!isNaN(rdl)&&rdl>0) strehlVal=(rdl/r865_um)**2;}
+
+      addTableRow(fname,fcx,fcy,(!isNaN(um)&&um>0)?um:null,fr865,r865_um,
+        fEps,fTheta,
+        (!isNaN(rdl)&&rdl>0&&r865_um!==null)?rdl:null,strehlVal);
+
+    }catch(err){
+      errors.push(`${file.name}: ${err.message}`);
+    }
+
+    done++;
+    fill.style.width=`${(done/folderFiles.length)*100}%`;
+    progressText.textContent=`${done} / ${folderFiles.length} files processed`;
+    // Yield to browser to update UI
+    await new Promise(r=>setTimeout(r,0));
+  }
+
+  if(errors.length>0){
+    errBox.style.display='block';
+    errBox.innerHTML=`<strong>${errors.length} error(s):</strong><br>`+errors.map(e=>`• ${e}`).join('<br>');
+  }
+  const good=done-errors.length;
+  const statusEl=document.getElementById('fileStatus');
+  statusEl.innerHTML=`Batch complete &nbsp;<span class="status-badge status-ok">${good} analysed</span>${errors.length>0?` <span class="status-badge status-err">${errors.length} failed</span>`:''}`;
+}
+
+// ════════ FILE READER PROMISE ════════
+function readFileAsArrayBuffer(file){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=ev=>resolve(ev.target.result);
+    r.onerror=()=>reject(new Error('FileReader error'));
+    r.readAsArrayBuffer(file);
+  });
+}
+
+// ════════ BUILD INTENSITY (single-file) ════════
 function buildIntensity(){
   const N=imgWidth*imgHeight;
   const raw=new Float64Array(N);
@@ -492,13 +693,10 @@ function renderLog(canvas,intensity){
 function drawOverlays(canvas){
   const ctx=canvas.getContext('2d');
   const lw=Math.max(1,imgWidth/600);
-  // 86.5% circle
   ctx.beginPath();ctx.arc(cx,cy,r865,0,2*Math.PI);
   ctx.strokeStyle='#00d4a0';ctx.lineWidth=lw*1.5;ctx.stroke();
-  // centroid dot
   ctx.beginPath();ctx.arc(cx,cy,Math.max(2,imgWidth/400),0,2*Math.PI);
   ctx.fillStyle='#4a9eff';ctx.fill();
-  // ellipse overlay - REMOVED
 }
 function showBothPlots(withOverlay){
   const cL=document.getElementById('spotCanvas'),cLg=document.getElementById('spotCanvasLog');
@@ -569,17 +767,12 @@ function plotCircle(){
   if(r865===0){alert('Run Calculate 86.5% EE Radius first.');return;}
   showBothPlots(true);
 }
-// adjusting overlay (not showing DL agagin)
 function plotDiffractionLimit(){
   const um=parseFloat(document.getElementById('um_per_pixel').value);
   const rdl=parseFloat(document.getElementById('r_dl').value);
   if(isNaN(um)||um<=0||isNaN(rdl)||rdl<=0){alert('Please enter both Microns/pixel and DL radius (Microns).');return;}
   if(!intensityData){alert('Please run Calculate 86.5% EE Radius first.');return;}
   const rdl_px=rdl/um,r865_um=r865*um,strehl=(rdl/r865_um)**2;
-  //let shtml=`<div class="result-label">Diffraction Limit & Strehl Ratio</div>`;
-  //shtml+=`DL = ${rdl.toFixed(2)} Microns (${rdl_px.toFixed(1)} px)&nbsp;|&nbsp;r₈₆.₅ = ${r865_um.toFixed(2)} Microns&nbsp;|&nbsp;<strong>Strehl ≈ ${strehl.toFixed(3)}</strong>`;
-  //if(strehl>1) shtml+=` <span style="color:#ffc800">(> 1: tighter than DL estimate)</span>`;
-  //showResult('dlResult',shtml);
   showBothPlots(r865>0);
   [document.getElementById('spotCanvas'),document.getElementById('spotCanvasLog')].forEach(canvas=>{
     const ctx=canvas.getContext('2d'),lw=Math.max(1,imgWidth/600);
@@ -610,7 +803,6 @@ function exportBeamTIFF(mode){
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-// Export any canvas as 16-bit TIFF (luma)
 function exportPlotTIFF(canvasId,name){
   const canvas=document.getElementById(canvasId);
   if(!canvas||canvas.style.display==='none'){alert('Plot not yet generated.');return;}
@@ -678,10 +870,8 @@ function exportCSV(){
 }
 
 // ════════ INTENSITY / a0 ════════
-//const LN2=Math.log(2);  ignore for now? 
-//const I0_FACTOR=(2*LN2)/Math.PI; // ≈ 0.4413
 const LN2=Math.log(2);
-const I0_FACTOR=1; // ≈ 0.4413
+const I0_FACTOR=1;
 
 function peakI(E_J,tau_s,r_cm){ return I0_FACTOR*E_J/(tau_s*Math.PI*r_cm*r_cm); }
 function a0fromI(I,lam_um){ return Math.sqrt(I*lam_um*lam_um/1.37e18); }
@@ -695,22 +885,14 @@ function calcIntensityPlots(){
   if(isNaN(tau_fs)||tau_fs<=0){showResult('intensityResult','Please enter a valid pulse duration τ (fs).',true);return;}
   const tau_s=tau_fs*1e-15;
 
-  let plotted=false;
-
-  // Plot 1: vs Energy  (need r)
   if(isNaN(r_in)||r_in<=0){
     document.getElementById('titleIvsE').textContent='⚠  Enter r₈₆.₅ (Microns) to generate this plot';
     document.getElementById('canvasIvsE').style.display='none';
   } else {
     const r_cm=r_in*1e-4;
     drawIvsE(tau_s,r_cm,lam_um,isNaN(E_in)?null:E_in);
-    plotted=true;
   }
 
-  // Plot 2: vs Radius  (need E)
-  //removing this plot
-
-  // Summary
   if(!isNaN(r_in)&&r_in>0&&!isNaN(E_in)&&E_in>0){
     const I=peakI(E_in,tau_s,r_in*1e-4);
     const a=a0fromI(I,lam_um);
@@ -733,18 +915,6 @@ function drawIvsE(tau_s,r_cm,lam_um,E_marker){
   document.getElementById('titleIvsE').textContent=`I & a₀ vs Energy  (τ=${(tau_s*1e15).toFixed(0)} fs, r=${(r_cm*1e4).toFixed(1)} Microns)`;
 }
 
-function drawIvsR(tau_s,E_J,lam_um,r_marker_um){
-  const canvas=document.getElementById('canvasIvsR');
-  canvas.style.display='block';
-  const W=canvas.offsetWidth||520,H=300;
-  canvas.width=W;canvas.height=H;
-  const rMin=1,rMax=1000,nPts=600;
-  const xs=[],Is=[],A0s=[];
-  for(let i=0;i<=nPts;i++){const r_um=rMin*Math.pow(rMax/rMin,i/nPts);const r_cm=r_um*1e-4;const I=peakI(E_J,tau_s,r_cm);xs.push(r_um);Is.push(I);A0s.push(a0fromI(I,lam_um));}
-  drawDualLogPlot(canvas,xs,Is,A0s,'r₈₆.₅ (Microns)','Intensity (W/cm²)','a₀',rMin,rMax,r_marker_um,'Microns');
-  document.getElementById('titleIvsR').textContent=`I & a₀ vs Radius  (τ=${(tau_s*1e15).toFixed(0)} fs, E=${E_J} J)`;
-}
-
 function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marker,markerUnit){
   const W=canvas.width,H=canvas.height,ctx=canvas.getContext('2d');
   const pad={t:22,b:44,l:88,r:88};
@@ -759,7 +929,6 @@ function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marke
   const toYI=v=>pad.t+ph-(Math.log10(Math.max(v,1e-300))-logImin)/(logImax-logImin)*ph;
   const toYA=v=>pad.t+ph-(Math.log10(Math.max(v,1e-300))-logA0min)/(logA0max-logA0min)*ph;
 
-  // Vertical gridlines + minor
   for(let e=Math.ceil(logXmin);e<=Math.floor(logXmax);e++){
     const x=toX(Math.pow(10,e));
     ctx.strokeStyle='#2a2f3d';ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,pad.t+ph);ctx.stroke();
@@ -770,7 +939,6 @@ function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marke
       if(xm>=pad.l&&xm<=pad.l+pw){ctx.strokeStyle='rgba(42,47,61,.5)';ctx.lineWidth=0.3;ctx.beginPath();ctx.moveTo(xm,pad.t);ctx.lineTo(xm,pad.t+ph);ctx.stroke();}
     }
   }
-  // Horizontal gridlines (I axis)
   for(let e=logImin;e<=logImax;e++){
     const y=toYI(Math.pow(10,e));
     if(y<pad.t||y>pad.t+ph) continue;
@@ -778,29 +946,24 @@ function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marke
   }
   ctx.strokeStyle='#3a4050';ctx.lineWidth=1;ctx.strokeRect(pad.l,pad.t,pw,ph);
 
-  // Left axis labels (I)
   ctx.fillStyle='#00d4a0';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='right';
   for(let e=logImin;e<=logImax;e++){
     const y=toYI(Math.pow(10,e));if(y<pad.t||y>pad.t+ph) continue;
     ctx.fillText(`10^${e}`,pad.l-5,y+3);
   }
-  // Right axis labels (a0)
   ctx.fillStyle='#4a9eff';ctx.textAlign='left';
   for(let e=logA0min;e<=logA0max;e++){
     const v=Math.pow(10,e),y=toYA(v);
     if(y>=pad.t&&y<=pad.t+ph) ctx.fillText(fmtSci(v),pad.l+pw+5,y+3);
   }
 
-  // Intensity curve
   ctx.strokeStyle='#00d4a0';ctx.lineWidth=2;ctx.beginPath();let st=false;
   for(let i=0;i<xs.length;i++){if(Is[i]<=0) continue;const x=toX(xs[i]),y=toYI(Is[i]);if(y<pad.t-10||y>pad.t+ph+10){st=false;continue;}st?ctx.lineTo(x,y):ctx.moveTo(x,y);st=true;}
   ctx.stroke();
-  // a0 curve
   ctx.strokeStyle='#4a9eff';ctx.lineWidth=2;ctx.beginPath();st=false;
   for(let i=0;i<xs.length;i++){if(A0s[i]<=0) continue;const x=toX(xs[i]),y=toYA(A0s[i]);if(y<pad.t-10||y>pad.t+ph+10){st=false;continue;}st?ctx.lineTo(x,y):ctx.moveTo(x,y);st=true;}
   ctx.stroke();
 
-  // Vertical marker
   if(marker!==null&&marker>0&&marker>=xMin&&marker<=xMax){
     const xm=toX(marker);
     ctx.strokeStyle='#ffc800';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
@@ -819,12 +982,10 @@ function drawDualLogPlot(canvas,xs,Is,A0s,xLabel,yLabelL,yLabelR,xMin,xMax,marke
     }
   }
 
-  // Axis labels
   ctx.fillStyle='#8892a4';ctx.font='10px IBM Plex Mono,monospace';ctx.textAlign='center';
   ctx.fillText(xLabel,pad.l+pw/2,H-5);
   ctx.save();ctx.translate(13,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#00d4a0';ctx.textAlign='center';ctx.fillText(yLabelL,0,0);ctx.restore();
   ctx.save();ctx.translate(W-10,pad.t+ph/2);ctx.rotate(Math.PI/2);ctx.fillStyle='#4a9eff';ctx.textAlign='center';ctx.fillText(yLabelR,0,0);ctx.restore();
-  // Legend
   ctx.fillStyle='#00d4a0';ctx.fillRect(pad.l+8,pad.t+8,16,2);
   ctx.fillStyle='#e2e8f0';ctx.font='9px IBM Plex Mono,monospace';ctx.textAlign='left';ctx.fillText('Intensity',pad.l+28,pad.t+11);
   ctx.fillStyle='#4a9eff';ctx.fillRect(pad.l+8,pad.t+18,16,2);
